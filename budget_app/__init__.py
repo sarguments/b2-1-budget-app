@@ -1,4 +1,6 @@
-"""budget_app — 파일 기반 용돈 기입장 콘솔 앱.
+"""budget_app — 파일 기반 용돈 기입장 콘솔 앱 (표준 라이브러리만 사용).
 
-패키지 골격만 준비된 상태이며, 기능 구현은 진행 중이다.
+계층 구조: cli(인수·출력) → service(규칙) → repositories(저장 창구) →
+storage(JSONL·역순 생성기·채번) + models(검증된 데이터) + parsing(형식 규칙)
++ decorators(로그·시간·예외) + formatting(표시 문자열) + errors(원인·힌트·종료 코드).
 """

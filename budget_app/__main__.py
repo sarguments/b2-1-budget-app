@@ -1,20 +1,14 @@
 """`python -m budget_app` 진입점.
 
-골격 단계: 서브커맨드 등록 전의 빈 파서. add/list/search/summary/budget/
-category/update/delete/import/export 명령 연결과 계층(CLI/서비스/저장소/모델)
-구현은 다음 단계에서 작성한다.
+실제 동작은 cli.main()에 위임하고, 여기서는 종료 코드만 SystemExit으로
+전달한다. 계층(CLI/서비스/저장소/모델) 구조는 README 참조.
 """
 
-import argparse
+from budget_app.cli import main as cli_main
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        prog="budget_app",
-        description="파일 기반 용돈 기입장 콘솔 앱",
-    )
-    parser.parse_args()
-    return 0
+    return cli_main()
 
 
 if __name__ == "__main__":
