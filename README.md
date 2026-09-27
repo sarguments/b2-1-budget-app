@@ -92,7 +92,7 @@ food
 etc
 
 $ printf '2024-01-15\nexpense\nfood\n15000\n점심\nmeal\n' | .venv/bin/python -m budget_app --data-dir /tmp/b2ref add
-날짜(YYYY-MM-DD): 타입(income/expense): 카테고리: 금액(양수): 메모(선택): 태그(쉼표로 구분, 없으면 엔터): [저장 완료] id=TX-000001
+날짜(YYYY-MM-DD, 엔터=오늘): 타입(income/expense, 엔터=expense): 카테고리 (parts, tools, edu, transit, food, etc, 엔터=etc): 금액(양수, 엔터=1000원): 메모(선택): 태그(쉼표로 구분, 없으면 엔터): [저장 완료] id=TX-000001
 
 $ .venv/bin/python -m budget_app --data-dir /tmp/b2ref list --limit 3
 TX-000001 | 2024-01-15 | expense | food | 15000 | 점심 #meal
@@ -122,10 +122,10 @@ $ .venv/bin/python -m budget_app --data-dir /tmp/b2ref import --from /tmp/b2ref-
 
 ```text
 $ printf '2024-13-40\nexpense\nfood\n-5\nx\ny\n' | .venv/bin/python -m budget_app --data-dir /tmp/b2ref add
-날짜(YYYY-MM-DD): [오류] 날짜 '2024-13-40'는 달력에 존재하지 않습니다.
+날짜(YYYY-MM-DD, 엔터=오늘): [오류] 날짜 '2024-13-40'는 달력에 존재하지 않습니다.
 [힌트] 월(01~12)과 일 범위를 확인하세요.
 ... (잘못된 값마다 재입력 요구) ...
-날짜(YYYY-MM-DD): [오류] 입력이 끝나 거래 추가를 중단했습니다.
+날짜(YYYY-MM-DD, 엔터=오늘): [오류] 입력이 끝나 거래 추가를 중단했습니다.
 [힌트] 다시 실행하거나, 파이프 입력이라면 필드 순서대로 값을 보내세요.
 $ echo $?   # 입력 소진으로 종료
 1

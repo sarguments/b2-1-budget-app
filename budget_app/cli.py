@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Callable, Sequence
+from datetime import date as calendar_date
 from pathlib import Path
 from typing import NoReturn, TypeVar
 
@@ -148,10 +149,16 @@ def _prompt_category(service: BudgetService) -> Callable[[str], str]:
 
 
 def cmd_add(service: BudgetService) -> None:
-    date = _prompt("날짜(YYYY-MM-DD): ", parse_date)
-    tx_type = _prompt("타입(income/expense): ", parse_type)
-    category = _prompt("카테고리: ", _prompt_category(service))
-    amount = _prompt("금액(양수): ", parse_amount)
+    date = _prompt("날짜(YYYY-MM-DD, 엔터=오늘): ", lambda raw: parse_date(raw.strip() or calendar_date.today().isoformat()))
+    tx_type = _prompt("타입(income/expense, 엔터=expense): ", lambda raw: parse_type(raw.strip() or "expense"))
+    registered_categories = [category.name for category in service.list_categories()]
+    category_names = ", ".join(registered_categories)
+    default_category = "etc" if "etc" in registered_categories else (registered_categories[0] if registered_categories else "")
+    category = _prompt(
+        f"카테고리 ({category_names}, 엔터={default_category}): ",
+        lambda raw: _prompt_category(service)(raw.strip() or default_category),
+    )
+    amount = _prompt("금액(양수, 엔터=1000원): ", lambda raw: parse_amount(raw.strip() or "1000"))
     memo = _prompt("메모(선택): ", lambda raw: raw.strip())
     tags = _prompt("태그(쉼표로 구분, 없으면 엔터): ", parse_tags)
     draft = NewTransaction(type=tx_type, date=date, amount=amount, category=category, memo=memo, tags=tags)
