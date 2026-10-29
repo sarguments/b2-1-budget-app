@@ -1,8 +1,7 @@
-"""저장 기반 도구들: 역순 줄 생성기, JSONL append/원자적 재작성, 채번 파일.
+"""JSONL 읽기·쓰기, 역순 generator, 거래 ID 관리.
 
-역순 생성기(`iter_lines_reversed`)가 이 앱의 메모리 절약 핵심이다.
-list/search는 파일을 처음부터 읽지 않고 끝에서 블록 단위로 거꾸로 읽어
-`최근 추가분`부터 유한 메모리로 뽑아낸다. 상세 전략은 README 참조.
+iter_lines_reversed는 파일 끝부터 읽는 generator다.
+거래일 정렬은 repositories의 외부 정렬을 사용한다.
 """
 
 from __future__ import annotations
@@ -14,7 +13,7 @@ from pathlib import Path
 
 from budget_app.errors import StorageError, ValidationError
 
-#: 기본 읽기 블록(8KiB). 역순 생성기의 메모리 상한이 된다.
+#: 기본 읽기 블록 크기. 메모리 사용량은 처리 중인 줄 길이에도 영향을 받는다.
 DEFAULT_BLOCK_SIZE: int = 8192
 
 
@@ -22,8 +21,8 @@ def iter_lines_reversed(path: Path, block_size: int = DEFAULT_BLOCK_SIZE) -> Ite
     """파일 끝에서부터 줄을 거꾸로 yield한다(빈 줄 제외, UTF-8 디코딩).
 
     블록 단위로 뒤에서 읽기 때문에 전체를 메모리에 올리지 않는다.
-    UTF-8 후속 바트는 0x0A와 겹치지 않으므로 바이트 경계에서 '\n'으로
-    자르는 디코딩은 안전하다. 파일이 없으면 아무것도 yield하지 않는다.
+    UTF-8 멀티바이트 문자에는 줄바꿈 바이트(0x0A)가 포함되지 않는다.
+    따라서 바이트 단위로 줄을 나눈 뒤 decode할 수 있다. 파일이 없으면 종료한다.
     """
     try:
         size = path.stat().st_size
@@ -59,11 +58,11 @@ def _decode(raw: bytes, path: Path) -> str:
 
 
 class JsonlStore:
-    """한 개의 JSONL 파일을 다루는 최소 저장소.
+    """JSONL 파일 하나의 읽기·쓰기를 담당한다.
 
-    - append/append_many: 한 줄(들)을 끝에 추가. 마지막 한 번의 write+fsync.
-    - iter_dicts / iter_dicts_reversed: 순방향/역순 지연(lazy) 읽기.
-    - replace_stream: 전체 재작성을 임시 파일 + os.replace로 원자적으로.
+    - append/append_many: record를 파일 끝에 쓰고 fsync한다.
+    - iter_dicts / iter_dicts_reversed: 정방향/역순으로 필요한 줄만 읽는다.
+    - replace_stream: 임시 파일을 모두 쓴 뒤 os.replace로 교체한다.
     """
 
     def __init__(self, path: Path) -> None:
@@ -76,7 +75,7 @@ class JsonlStore:
         self.append_many([record])
 
     def append_many(self, records: Iterable[Mapping[str, object]]) -> int:
-        """여러 레코드를 '한 번의' 추가 쓰기로 저장한다(단건 추가의 빠른 경로)."""
+        """여러 record를 문자열로 모아 파일 끝에 한 번에 쓴다."""
         lines = "".join(
             json.dumps(record, ensure_ascii=False) + "\n" for record in records
         )
@@ -119,10 +118,10 @@ class JsonlStore:
         return record
 
     def replace_stream(self, records: Iterable[Mapping[str, object]]) -> None:
-        """기록 흐름을 받아 임시 파일에 쓴 뒤 os.replace로 원자적 교체.
+        """record를 차례로 임시 파일에 쓴 뒤 os.replace로 교체한다.
 
-        중간에 실패하면 임시 파일만 지우고 원본은 건드리지 않는다(롤백).
-        records는 제네레이터라도 되며 전부 메모리에 담지 않는다.
+        실패하면 임시 파일만 지우고 원본을 보존한다.
+        records는 generator도 받을 수 있으며 전체를 메모리에 모으지 않는다.
         """
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temp = self.path.parent / f"{self.path.name}.{os.getpid()}.tmp"
@@ -139,16 +138,15 @@ class JsonlStore:
 
 
 class SequenceFile:
-    """거래 id 채번 카운터(meta.json 단일 객체).
+    """meta.json에 다음 거래 번호를 저장한다.
 
-    append-only 추가와 update/delete 재작성을 오가도 id가 중복되지 않게,
-    다음 번호를 파일에 따로 저장한다. 사용 순서는 'peek로 id 형식 →
-    advance로 확정 → 거래 append'. 거래 쓰기가 실패해도 번호는 이미
-    쓰였으므로 재사용되지 않고, 그 결과 id는 항상 단조 증가한다.
+    peek는 양의 정수인지, 기존 거래 번호와 겹치지 않는지 검사한다.
+    advance는 거래를 쓰기 전에 번호를 예약한다. 거래 저장에 실패해도
+    예약한 번호는 되돌리지 않는다. 여러 프로세스의 동시 쓰기는 지원하지 않는다.
 
-    meta.json이 없거나 비었는데 거래 파일에 id가 남아 있는 회복 상황을
-    대비해 `fallback`(예: 기존 최대 id + 1)을 선택적으로 받는다. 폴백이
-    없으면 예전처럼 1부터 시작한다.
+    fallback은 기존 최대 ID + 1을 반환한다. 파일이 없으면 이 값부터
+    시작하고, 파일이 있으면 다음 번호의 하한으로 쓴다. 삭제된 거래의
+    과거 ID는 meta.json 없이 복구할 수 없다.
     """
 
     def __init__(self, path: Path, fallback: Callable[[], int | None] | None = None) -> None:
@@ -168,19 +166,27 @@ class SequenceFile:
         except json.JSONDecodeError as exc:
             raise ValidationError(
                 "meta.json이 손상됐습니다.",
-                "json을 수리할 수 없으면 meta.json을 삭제하세요. 삭제 후에는 "
-                "기존 거래의 최대 id + 1(거래가 없으면 1)부터 채번을 이어갑니다.",
+                "백업에서 복구하거나 meta.json을 삭제하세요. 삭제 후에는 "
+                "남은 거래의 최대 ID + 1(거래가 없으면 1)부터 이어집니다.",
             ) from exc
-        if not isinstance(data, dict) or not isinstance(data.get("next_seq"), int):
+        current = data.get("next_seq") if isinstance(data, dict) else None
+        if type(current) is not int or current < 1:
             raise ValidationError(
-                "meta.json 형식이 잘못됐습니다.",
-                "json을 수리할 수 없으면 meta.json을 삭제하세요. 삭제 후에는 "
-                "기존 거래의 최대 id + 1(거래가 없으면 1)부터 채번을 이어갑니다.",
+                "meta.json의 next_seq는 1 이상의 정수여야 합니다.",
+                "백업에서 복구하거나 meta.json을 삭제하세요. 삭제 후에는 "
+                "남은 거래의 최대 ID + 1(거래가 없으면 1)부터 이어집니다.",
             )
-        return int(data["next_seq"])
+        minimum = self._fresh_start()
+        if current < minimum:
+            raise ValidationError(
+                f"meta.json의 다음 거래 번호({current})가 기존 거래 번호와 겹칩니다.",
+                "meta.json을 백업에서 복구하거나 삭제한 뒤 다시 실행하세요. "
+                "삭제 후에는 기존 거래의 최대 id + 1부터 이어집니다.",
+            )
+        return current
 
     def _fresh_start(self) -> int:
-        """meta.json이 없을 때의 시작 번호: 회복 폴백 우선, 없으면 1."""
+        """fallback으로 다음 거래 번호의 하한을 구한다. 없으면 1을 쓴다."""
         if self._fallback is not None:
             recovered = self._fallback()
             if recovered is not None:
@@ -188,13 +194,13 @@ class SequenceFile:
         return 1
 
     def advance(self) -> int:
-        """번호를 하나 쓰고 확정(원자적 교체)한다. 사용 전 값을 돌려준다."""
+        """번호 하나를 예약하고 예약한 번호를 반환한다."""
         current = self.peek()
         self._write(current + 1)
         return current
 
     def advance_by(self, count: int) -> int:
-        """count개를 한 번에 쓰고 사용 시작 번호를 돌려준다(import용)."""
+        """import에 사용할 번호 count개를 예약하고 첫 번호를 반환한다."""
         current = self.peek()
         self._write(current + max(count, 0))
         return current

@@ -1,8 +1,8 @@
-"""CLI 종단간(end-to-end) 테스트: 실제 프로세스로 10개 명령·오류 코드·영속성 검증.
+"""CLI end-to-end 테스트: 실제 프로세스로 명령·종료 코드·저장 유지를 확인한다.
 
 `.venv/bin/python -m budget_app`을 임시 --data-dir 대상으로 subprocess로
-실행하므로, 스택 트레이스 없이 [오류]/[힌트]가 뜨는지와 프로세스 간
-데이터 지속(재시작)까지 함께 확인한다.
+실행한다. 오류 안내에 traceback이 섞이지 않는지, 재실행 후에도
+저장한 데이터가 남아 있는지 확인한다.
 """
 
 from __future__ import annotations
@@ -41,6 +41,38 @@ class CliProcessMixin(unittest.TestCase):
     def add_tx(self, fields: str) -> subprocess.CompletedProcess[str]:
         return self.run_cli("add", stdin=fields)
 
+
+class RequirementRegressionTest(CliProcessMixin):
+    def test_first_command_creates_three_storage_files(self) -> None:
+        proc = self.run_cli("list")
+        self.assertEqual(proc.returncode, 0)
+        for name in ("transactions.jsonl", "categories.jsonl", "budgets.jsonl"):
+            self.assertTrue((self.data_dir / name).is_file(), name)
+
+    def test_backdated_entries_and_date_updates_sort_by_transaction_date(self) -> None:
+        for day in ("2024-01-30", "2024-01-01", "2024-01-20"):
+            proc = self.run_cli("add", stdin=f"{day}\nexpense\nfood\n1000\nprobe\n\n")
+            self.assertEqual(proc.returncode, 0)
+        for command in (("list", "--limit", "2"), ("search", "--category", "food")):
+            lines = self.run_cli(*command).stdout.splitlines()
+            self.assertTrue(lines[0].startswith("TX-000001"))
+            self.assertTrue(lines[1].startswith("TX-000003"))
+        proc = self.run_cli("update", "--id", "TX-000002", "--date", "2024-02-01")
+        self.assertEqual(proc.returncode, 0)
+        self.assertTrue(self.run_cli("list", "--limit", "1").stdout.startswith("TX-000002"))
+
+    def test_seven_digit_id_supports_add_update_delete_and_recovery(self) -> None:
+        self.run_cli("category", "list")
+        (self.data_dir / "meta.json").write_text('{"next_seq":1000000}', encoding="utf-8")
+        proc = self.run_cli("add", stdin="2024-01-15\nexpense\nfood\n1000\nprobe\n\n")
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("id=TX-1000000", proc.stdout)
+        self.assertEqual(self.run_cli("update", "--id", "TX-1000000", "--amount", "2000").returncode, 0)
+        (self.data_dir / "meta.json").unlink()
+        proc = self.run_cli("add", stdin="2024-01-15\nexpense\nfood\n1000\nprobe\n\n")
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("id=TX-1000001", proc.stdout)
+        self.assertEqual(self.run_cli("delete", "--id", "TX-1000000").returncode, 0)
 
 class HelpAndSeedTest(CliProcessMixin):
     def test_root_help_lists_all_commands(self) -> None:
@@ -156,7 +188,7 @@ class SearchSummaryBudgetTest(CliProcessMixin):
         self.assertEqual(proc.returncode, 0)
         self.assertIn("총 수입: 0원", proc.stdout)
         self.assertIn("예산: 10000원 (사용률 0.0%)", proc.stdout)
-        self.assertNotIn("데이터가 없습니다", proc.stdout)
+        self.assertIn("거래가 없습니다", proc.stdout)
 
     def test_budget_list_shows_set_month(self) -> None:
         self.run_cli("budget", "set", "--month", "2024-01", "--amount", "500000")
@@ -236,6 +268,61 @@ class UpdateDeleteTest(CliProcessMixin):
 
 
 class ImportExportTest(CliProcessMixin):
+    def test_import_accepts_utf8_bom_and_preserves_quoted_commas(self) -> None:
+        path = self.csv_dir / "bom.csv"
+        path.write_text(
+            "date,type,category,amount,memo,tags\n"
+            '2024-03-01,expense,food,1000,"lunch,coffee","meal,work"\n',
+            encoding="utf-8-sig",
+        )
+        proc = self.run_cli("import", "--from", str(path))
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("imported=1, skipped=0", proc.stdout)
+        shown = self.run_cli("list").stdout
+        self.assertIn("lunch,coffee", shown)
+        self.assertIn("#meal,work", shown)
+
+    def test_import_rejects_extra_and_missing_cells_without_silent_truncation(self) -> None:
+        path = self.csv_dir / "wrong-width.csv"
+        path.write_text(
+            "date,type,category,amount,memo,tags\n"
+            "2024-03-01,expense,food,1000,lunch,meal,work\n"
+            "2024-03-02,expense,food,1000,lunch\n"
+            '2024-03-03,expense,food,1000,lunch,"meal,work"\n',
+            encoding="utf-8",
+        )
+        proc = self.run_cli("import", "--from", str(path))
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("imported=1, skipped=2", proc.stdout)
+        shown = self.run_cli("list").stdout
+        self.assertEqual(len(shown.splitlines()), 1)
+        self.assertIn("#meal,work", shown)
+
+    def test_malformed_csv_aborts_before_saving_valid_prefix(self) -> None:
+        self.add_tx("2024-01-15\nexpense\nfood\n15000\n점심\nmeal\n")
+        before = {p.name: p.read_bytes() for p in self.data_dir.iterdir()}
+        path = self.csv_dir / "broken-quotes.csv"
+        path.write_text(
+            "date,type,category,amount,memo,tags\n"
+            "2024-03-01,expense,food,1000,valid,\n"
+            '2024-03-02,expense,food,1000,"unclosed,tag\n',
+            encoding="utf-8",
+        )
+        proc = self.run_cli("import", "--from", str(path))
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("CSV", proc.stdout)
+        self.assertIn("[힌트]", proc.stdout)
+        self.assertEqual({p.name: p.read_bytes() for p in self.data_dir.iterdir()}, before)
+
+    def test_invalid_utf8_import_reports_encoding_error(self) -> None:
+        path = self.csv_dir / "encoding.csv"
+        path.write_bytes(b"date,type,category,amount\n2024-03-01,expense,food,1000\n\xff")
+        proc = self.run_cli("import", "--from", str(path))
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("UTF-8", proc.stdout)
+        self.assertIn("[힌트]", proc.stdout)
+        self.assertIn("거래가 없습니다", self.run_cli("list").stdout)
+
     def test_export_requires_condition(self) -> None:
         proc = self.run_cli("export", "--out", str(self.csv_dir / "x.csv"))
         self.assertEqual(proc.returncode, 2)

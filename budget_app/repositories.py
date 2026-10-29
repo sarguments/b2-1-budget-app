@@ -1,66 +1,101 @@
-"""모델을 넣고 빼는 저장소(Repository) 세 개 + 채번 연결.
+"""거래·카테고리·예산 repository와 거래 ID 발급.
 
 - TransactionRepository: 거래 추가/조회/수정/삭제. 단건 추가만 append,
-  import(add_many)·수정·삭제는 스트리밍 재작성 후 os.replace 원자 교체(storage.JsonlStore.replace_stream).
+  import·수정·삭제는 임시 파일을 쓴 뒤 os.replace로 교체한다.
 - CategoryRepository: 카테고리 추가/목록/삭제, 첫 실행 기본값 자동 생성.
 - BudgetRepository: 월 예산 upsert(한 달 한 개)과 목록.
 
-저장소는 형식 검증만 모델에 맡기고, 파일 경로 규칙과 id 채번을 책임진다.
+각 repository는 파일 경로와 저장 방식을 관리하고, 값 검증은 model에 맡긴다.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator
+from contextlib import ExitStack, closing
+import heapq
+import json
 from itertools import chain
 from pathlib import Path
+import tempfile
 
-from budget_app.errors import ConflictError, NotFoundError
+from budget_app.errors import ConflictError, NotFoundError, ValidationError
 from budget_app.models import Budget, Category, NewTransaction, Transaction
 from budget_app.parsing import format_transaction_id, is_transaction_id
 from budget_app.storage import JsonlStore, SequenceFile
 
-#: 저장 파일이 아예 없거나 비었을 때 만드는 기본 카테고리(README 소재안).
+#: 카테고리 파일이 없거나 비었을 때 등록할 기본값.
 DEFAULT_CATEGORY_NAMES: tuple[str, ...] = ("parts", "tools", "edu", "transit", "food", "etc")
+
+#: 외부 정렬의 메모리와 동시 파일 수를 제한한다.
+SORT_CHUNK_SIZE = 1024
+MERGE_WIDTH = 32
+
+
+def _transaction_order(tx: Transaction) -> tuple[str, int]:
+    return tx.date, int(tx.id[3:])
+
+
+def _merge_runs(paths: list[Path]) -> Iterator[Transaction]:
+    """정렬된 JSONL 파일을 일정한 수만 열어 merge한다."""
+    with ExitStack() as stack:
+        def read(path: Path) -> Iterator[Transaction]:
+            handle = stack.enter_context(path.open("r", encoding="utf-8"))
+            for line in handle:
+                yield Transaction.from_json_dict(json.loads(line))
+
+        yield from heapq.merge(
+            *(read(path) for path in paths), key=_transaction_order, reverse=True
+        )
+
+
+def _write_run(path: Path, transactions: Iterable[Transaction]) -> None:
+    """정렬 작업용 파일을 쓴다. 사용자 데이터 파일은 변경하지 않는다."""
+    with path.open("w", encoding="utf-8", newline="\n") as handle:
+        for tx in transactions:
+            handle.write(json.dumps(tx.to_json_dict(), ensure_ascii=False) + "\n")
 
 
 class TransactionRepository:
-    """transactions.jsonl 한 파일의 유일한 쓰기·읽기 창구."""
+    """transactions.jsonl 한 파일의 읽기·쓰기와 ID 발급을 담당한다."""
 
     def __init__(self, data_dir: Path) -> None:
         self._store = JsonlStore(data_dir / "transactions.jsonl")
-        # meta.json 유실/비움 회복: 기존 최대 id + 1로 채번을 이어가 id 중복을 막는다.
+        # 기존 거래의 최대 ID로 복구하거나 meta.json의 다음 번호를 검증한다.
         self._seq = SequenceFile(data_dir / "meta.json", fallback=self._recover_from_ids)
 
     def _recover_from_ids(self) -> int | None:
         """거래 파일의 유효한 `TX-` id 중 최대값 + 1. 거래가 없으면 None.
 
-        meta.json이 사라졌거나 비었을 때만(SequenceFile 폴백) 호출되는
-        회복 경로라 전체 순회를 감수한다. id 형식이 아닌 줄은 여기서 판단
-        하지 않고 넘긴다(실제 독해 경로는 모델 검증이 잡는다).
+        거래 파일을 순회하며 다음 번호의 하한을 계산한다.
+        잘못된 ID가 있으면 추가를 중단한다. 다른 필드는 거래를 읽을 때 검증한다.
         """
         best: int | None = None
         for record in self._store.iter_dicts():
-            raw_id = record.get("id")
-            if isinstance(raw_id, str) and is_transaction_id(raw_id):
-                seq = int(raw_id[len("TX-"):])
-                if best is None or seq >= best:
-                    best = seq + 1
+            tx_id = record.get("id")
+            if not isinstance(tx_id, str) or not is_transaction_id(tx_id):
+                raise ValidationError(
+                    "transactions.jsonl에 잘못된 거래 ID가 있습니다.",
+                    "거래 파일을 백업에서 복구하거나 잘못된 ID를 확인하세요.",
+                )
+            seq = int(tx_id[len("TX-"):])
+            if best is None or seq >= best:
+                best = seq + 1
         return best
 
     def add(self, draft: NewTransaction) -> Transaction:
-        """id를 채번해 한 건을 확정 저장하고 모델을 돌려준다."""
+        """ID를 발급해 거래 한 건을 저장하고 Transaction을 반환한다."""
         tx = Transaction.from_draft(format_transaction_id(self._seq.peek()), draft)
         self._seq.advance()
         self._store.append(tx.to_json_dict())
         return tx
 
     def add_many(self, drafts: Iterable[NewTransaction]) -> list[Transaction]:
-        """초안을 전부 검증한 뒤, 기존분+유효분을 스트리밍 재작성으로 원자 추가.
+        """초안을 검증하고 기존 거래와 합쳐 임시 파일에 쓴 뒤 교체한다.
 
         append가 아니라 `replace_stream`(임시 파일 + os.replace)을 써서
         쓰기 중 실패해도 원본 `transactions.jsonl`은 1바이트도 바뀌지
-        않는다. 채번 확정(advance_by)은 쓰기 앞에 두고 실패 시 번호는
-        건너뛸 뿐 재사용되지 않는다(id 단조 증가 유지).
+        않는다. ID 예약(advance_by)은 쓰기 전에 처리한다. 실패하면 번호는
+        건너뛰며 정상 meta.json을 유지하는 동안 예약한 번호는 재사용하지 않는다.
         """
         draft_list = list(drafts)
         start = self._seq.peek()
@@ -78,26 +113,74 @@ class TransactionRepository:
         self._store.replace_stream(merged)
         return records
 
-    def iter_newest_first(self, limit: int | None = None) -> Iterator[Transaction]:
-        """역순 생성기로 최신 추가분부터 유한 메모리 순회. limit건에서 중단."""
-        count = 0
-        for record in self._store.iter_dicts_reversed():
-            yield Transaction.from_json_dict(record)
-            count += 1
-            if limit is not None and count >= limit:
-                return
+    def iter_newest_first(
+        self,
+        limit: int | None = None,
+        predicate: Callable[[Transaction], bool] | None = None,
+    ) -> Iterator[Transaction]:
+        """거래일·ID 내림차순으로 반환한다. 전체 거래는 메모리에 모으지 않는다.
+
+        SORT_CHUNK_SIZE건씩 정렬해 임시 JSONL로 쓴 뒤 merge한다.
+        run이 많으면 MERGE_WIDTH개씩 합쳐 동시 파일 수도 제한한다.
+        generator를 닫거나 오류가 나면 임시 파일을 정리한다.
+        """
+        if limit is not None and limit < 1:
+            return
+        transactions = (tx for tx in self.iter_all() if predicate is None or predicate(tx))
+        if limit is not None and limit <= SORT_CHUNK_SIZE:
+            # 전체를 읽되, 메모리에는 지정한 개수의 최신 거래만 유지한다.
+            yield from heapq.nlargest(limit, transactions, key=_transaction_order)
+            return
+        with tempfile.TemporaryDirectory(prefix="budget-sort-") as folder:
+            directory = Path(folder)
+            runs: list[Path] = []
+            chunk: list[Transaction] = []
+            for tx in transactions:
+                chunk.append(tx)
+                if len(chunk) >= SORT_CHUNK_SIZE:
+                    chunk.sort(key=_transaction_order, reverse=True)
+                    path = directory / f"run-{len(runs)}.jsonl"
+                    _write_run(path, chunk)
+                    runs.append(path)
+                    chunk.clear()
+            if chunk:
+                chunk.sort(key=_transaction_order, reverse=True)
+                path = directory / f"run-{len(runs)}.jsonl"
+                _write_run(path, chunk)
+                runs.append(path)
+            generation = 0
+            while len(runs) > MERGE_WIDTH:
+                merged: list[Path] = []
+                for offset in range(0, len(runs), MERGE_WIDTH):
+                    batch = runs[offset:offset + MERGE_WIDTH]
+                    path = directory / f"merge-{generation}-{len(merged)}.jsonl"
+                    with closing(_merge_runs(batch)) as stream:
+                        _write_run(path, stream)
+                    merged.append(path)
+                    for old in batch:
+                        old.unlink()
+                runs = merged
+                generation += 1
+            ordered = _merge_runs(runs)
+            try:
+                for count, tx in enumerate(ordered, start=1):
+                    yield tx
+                    if limit is not None and count >= limit:
+                        return
+            finally:
+                ordered.close()
 
     def iter_all(self) -> Iterator[Transaction]:
-        """추가된 순서(파일 순) 전체 순회. summary처럼 최신순이 의미 없는 곳에 쓴다."""
+        """입력 순서대로 거래를 읽는다. summary 등의 집계에 사용한다."""
         for record in self._store.iter_dicts():
             yield Transaction.from_json_dict(record)
 
     def update(self, tx_id: str, transform: Callable[[Transaction], Transaction]) -> Transaction:
-        """한 건만 고치는 스트리밍 재작성 + 원자 교체. 없으면 NotFoundError."""
+        """해당 거래를 바꿔 임시 파일에 쓰고 교체한다. 없으면 NotFoundError."""
         return self._rewrite(tx_id, lambda tx: transform(tx))
 
     def remove(self, tx_id: str) -> Transaction:
-        """한 건을 빼는 스트리밍 재작성 + 원자 교체. 없으면 NotFoundError."""
+        """해당 거래를 제외해 임시 파일에 쓰고 교체한다. 없으면 NotFoundError."""
         return self._rewrite(tx_id, lambda tx: None)
 
     def _rewrite(

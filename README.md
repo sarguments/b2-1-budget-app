@@ -1,296 +1,220 @@
 # b2-1-budget-app
 
-파일 기반 용돈 기입장 콘솔 앱 (Python 3.10 이상, 표준 라이브러리만 사용).
-`python -m budget_app <명령> [옵션]` 형식으로 10개 기능을 제공한다:
-add / list / search / summary / budget(set·list) / category(add·list·remove) / update / delete / import / export.
+Python 3.10 이상에서 실행하는 파일 기반 용돈 기입장입니다. 표준 라이브러리만 사용합니다.
 
-## 이 앱의 소재
+거래 추가·목록·검색·수정·삭제, 월별 요약, 예산과 카테고리 관리, CSV import/export를 지원합니다.
+로봇 부품·장비·교육·교통비 등 개인 지출을 기록하는 용도로 구성했습니다.
+이 구현은 `ref/b2-1-solution` 브랜치에 있습니다. `main`은 학습용 골격입니다.
 
-로봇 학습과 취미 프로젝트에 들어간 지출을 기록하는 용도로 씁니다. 기능·명령·저장 구조는 미션 원문 요구를 그대로 따르고, 소재만 아래처럼 잡습니다.
-
-- 기본 카테고리 후보(저장 파일이 비었을 때 자동 생성하는 안을 택할 경우): `parts`(부품), `tools`(장비), `edu`(교육), `transit`(교통), `food`(식비), `etc`(기타)
-- 예시 데이터 소재: 로봇 부품 구매, 키트와 공구, 온라인 강의, 교육장 왕복 교통비
-
-> 이 절의 후보안은 구현되었어요. 데이터 파일(categories.jsonl)이 비어 있으면 위 6개 카테고리를 자동 생성하고(안 A), 실제 명령 예시와 import·export CSV 스키마는 아래에서 확인할 수 있습니다.
-
-## 개발 환경
-Python 3.10 이상과 표준 라이브러리만 사용합니다. 외부 패키지를 설치하지 않습니다.
-
-### 새 환경에서 준비
-
-Git을 설치한 뒤 새 기기에서 저장소를 받습니다.
+## 실행 준비
 
 ```bash
 git clone https://github.com/sarguments/b2-1-budget-app.git
 cd b2-1-budget-app
+git switch ref/b2-1-solution
 ```
 
-Python 3.10 이상을 설치한 뒤 저장소 루트에서 실행합니다. 가상환경은 기기마다 새로 만듭니다.
+Python 버전이 3.10 이상인지 확인한 뒤 가상환경을 만듭니다. 기본 `python3`의 버전이 낮으면 설치된 상위 버전의 실행 파일을 지정합니다.
 
 ```bash
 python3 --version
 python3 -m venv .venv
-.venv/bin/python --version
 .venv/bin/python -m budget_app --help
 ```
 
-외부 패키지는 설치하지 않습니다. 10개 기능 명령은 모두 구현·검증되어 있습니다(2026-09-26, 로컬 Python 3.14.3 가상환경에서 아래 예시 출력과 테스트·벤치를 확인).
+외부 패키지 설치는 필요하지 않습니다.
 
-## 실행 방법
+## 명령 사용법
 
-저장소 루트에서 실행합니다(`-m` 방식, 설치 불필요).
+저장소 루트에서 실행합니다.
 
 ```bash
-.venv/bin/python -m budget_app --help                    # 전체 명령
-.venv/bin/python -m budget_app add                       # 대화형 거래 입력
-.venv/bin/python -m budget_app list --limit 20           # 최신 추가순 목록
-.venv/bin/python -m budget_app search --from 2024-01-01 --to 2024-01-31 --type expense
-.venv/bin/python -m budget_app summary --month 2024-01 --top 3
-.venv/bin/python -m budget_app budget set --month 2024-01 --amount 500000
+.venv/bin/python -m budget_app add
+.venv/bin/python -m budget_app list --limit 20
+.venv/bin/python -m budget_app search --from 2026-10-01 --to 2026-10-31 --type expense
+.venv/bin/python -m budget_app summary --month 2026-10 --top 3
+.venv/bin/python -m budget_app budget set --month 2026-10 --amount 500000
 .venv/bin/python -m budget_app budget list
 .venv/bin/python -m budget_app category add robot-kit
 .venv/bin/python -m budget_app category list
-.venv/bin/python -m budget_app category remove edu
-.venv/bin/python -m budget_app update --id TX-000001 --memo 도시락 --tags lunch,ref
+.venv/bin/python -m budget_app category remove robot-kit
+.venv/bin/python -m budget_app update --id TX-000001 --memo 도시락 --tags lunch,work
 .venv/bin/python -m budget_app delete --id TX-000001
+.venv/bin/python -m budget_app export --out backup.csv --month 2026-10
 .venv/bin/python -m budget_app import --from backup.csv
-.venv/bin/python -m budget_app export --out backup.csv --month 2024-01
 ```
 
-- 전역 옵션: `--data-dir DIR`(저장 디렉터리, 기본 `./data`), `--verbose`(데코레이터 로그·소요 시간을 stderr에 출력). 서브커맨드 앞에 붙인다.
-- 모든 옵션은 `--`(더블대시) 계열이고, 모든 (서브)커맨드는 `--help`를 지원합니다.
-- 성공 시 종료 코드 0, 오류는 1(도메인·데이터) 또는 2(사용법·인수)를 반환합니다. 스택 트레이스는 출력하지 않습니다.
+각 줄은 별도의 사용 예시입니다. 조회·수정·삭제에는 해당 데이터가 먼저 있어야 합니다.
+모든 명령과 하위 명령에서 `--help`로 옵션을 확인할 수 있습니다.
+옵션은 리눅스 long option 형식인 `--limit`, `--month`처럼 `--`를 사용합니다.
 
-## 저장 파일 위치·형식
+전역 옵션은 명령 앞에 붙입니다.
 
-`--data-dir` 지정 경로(기본 `./data`)에 **JSONL(1줄 = 1 JSON 객체, UTF-8)** 파일 4개로 저장합니다.
+```bash
+.venv/bin/python -m budget_app --data-dir /tmp/budget-demo --verbose category list
+```
+
+- `--data-dir DIR`: 저장 폴더. 기본값은 현재 작업 폴더의 `./data`입니다.
+- `--verbose`: decorator의 로그와 실행 시간을 stderr에 출력합니다.
+- `list`와 `search`는 **거래일 내림차순**으로 출력합니다. 날짜가 같으면 거래 ID의 숫자 부분이 큰 순서로 출력합니다. 과거 날짜를 나중에 입력해도 거래일 순서가 유지됩니다.
+- `summary`는 거래가 없는 달을 안내합니다. 예산만 등록된 달은 거래가 없다는 안내와 예산 사용률 0.0%를 함께 출력합니다.
+- `update`는 옵션으로 지정한 필드만 변경합니다. `--memo ''`, `--tags ''`로 값을 비울 수 있습니다.
+
+## 거래 입력과 카테고리
+
+`add`는 날짜, 타입, 카테고리, 금액, 메모, 태그를 차례로 입력받습니다.
+날짜·타입·카테고리·금액의 기본값은 각 프롬프트에 표시됩니다. 잘못된 필드 값은 오류와 힌트를 출력한 뒤 다시 입력받습니다.
+
+카테고리 파일이 없거나 비어 있으면 `add`, `category`, `import`, `update` 실행 시 아래 기본 카테고리를 만듭니다.
+
+| 이름 | 용도 |
+|---|---|
+| `parts` | 부품 |
+| `tools` | 장비·공구 |
+| `edu` | 교육 |
+| `transit` | 교통 |
+| `food` | 식비 |
+| `etc` | 기타 |
+
+모든 카테고리를 삭제한 경우에도 다음 실행 시 기본값이 다시 만들어집니다.
+거래에서 사용하는 카테고리는 삭제할 수 없습니다. 거래를 다른 카테고리로 옮기거나 삭제한 뒤 카테고리를 삭제해야 합니다.
+
+## 저장 파일
+
+거래·카테고리·예산은 UTF-8 JSONL 파일에 저장합니다. JSONL의 각 줄에는 JSON 객체 하나가 들어갑니다.
+거래 번호 카운터는 별도의 JSON 파일로 관리합니다.
+명령을 처음 실행할 때 `transactions.jsonl`, `categories.jsonl`, `budgets.jsonl`이 없으면 빈 파일을 자동으로 만듭니다. 기존 파일은 덮어쓰지 않습니다.
 
 | 파일 | 내용 | 쓰기 방식 |
 |---|---|---|
-| `transactions.jsonl` | 거래(id·타입·날짜·금액·카테고리·메모·태그) | 단건 add=append, import·수정·삭제=임시 파일 재작성 후 원자 교체 |
-| `categories.jsonl` | 카테고리 이름 | 추가=append, 삭제=원자 교체 |
-| `budgets.jsonl` | 월 예산(month·amount), 한 달 한 개 | upsert=원자 교체 |
-| `meta.json` | 거래 id 채번 카운터(`{"next_seq": n}`) | 원자 교체 |
+| `transactions.jsonl` | id, 타입, 날짜, 금액, 카테고리, 메모, 태그 | 단건 추가는 append, import·수정·삭제는 임시 파일 작성 후 `os.replace` |
+| `categories.jsonl` | 카테고리 이름 | 추가는 append, 삭제는 `os.replace` |
+| `budgets.jsonl` | 월별 예산 | 같은 월의 예산을 갱신한 뒤 `os.replace` |
+| `meta.json` | 다음 거래 번호(`next_seq`) | `os.replace` |
 
-거래 id는 `TX-` + 6자리 영(0) 채번(`TX-000001`)으로 **단조 증가**합니다. `meta.json`을 별도로 두는 이유: 마지막 거래를 삭제 후 재추가해도 그 id가 재사용되지 않게, 채번 상태를 파일에만 의존하지 않고 분리해서 관리합니다. 확정 순서는 단건 add가 `peek → meta 원자 쓰기 → 거래 append`이고, import는 `peek → advance_by → 기존분+유효분 재작성(os.replace)`으로 채번 순서는 같습니다. 거래 쓰기가 실패해도 번호는 건너뛸 뿐 재사용되지 않습니다. 만약 `meta.json`이 없어지거나 비어도 거래 파일에 남은 최대 id + 1부터 채번을 이어가므로 id가 중복되지 않습니다(거래까지 없을 때만 1부터 시작).
+거래 ID는 `TX-` 뒤에 최소 6자리 ASCII 숫자를 붙입니다. 예를 들어 `TX-000001`부터 시작하며 999999 다음에는 `TX-1000000`처럼 자릿수가 늘어납니다. 0 이하의 번호는 허용하지 않습니다. 새 번호를 먼저 확정한 뒤 거래를 저장합니다.
+거래 저장이 실패하면 번호가 건너뛰어질 수 있습니다.
+`next_seq`에는 bool을 제외한 양수 int만 허용합니다. 값이 기존 거래의 최대 번호 이하이면 추가·import를 거부하고 거래와 번호 파일을 유지합니다.
+번호 파일이 없거나 비었을 때는 남아 있는 거래의 최대 번호 + 1부터 복구합니다. 삭제된 거래의 과거 번호까지 복구하지는 못합니다.
+번호가 계속 증가한다는 보장은 정상적인 번호 파일을 유지하고 한 프로세스에서 사용하는 경우에 적용됩니다.
+번호 검증 시 기존 거래 ID를 순회하므로, 거래 추가에도 파일 크기에 비례하는 읽기 비용이 발생합니다.
 
-list는 파일을 처음부터 읽지 않습니다. `storage.iter_lines_reversed`가 파일 **끝에서 블록(기본 8KiB) 단위로 거꾸로** 읽어 최근 추가분부터 yield하므로, `list --limit 5`는 파일이 14MiB(10만 건)여도 5건+블록만 읽고 거기서 멈춥니다. 반면 `search`도 역순 생성기를 쓰지만 조건에 맞는 건을 찾으려면 끝에서 시작해 **결국 전 파일을 훑어야** 하므로(중단 조건이 없음), 읽는 양 자체는 전체입니다.
+조회 결과는 generator로 반환하며, 요청 범위에 따라 정렬 방법을 나눕니다.
 
-`categories.jsonl`이 0바이트가 되는 경우는 첫 실행과 같은 시드 조건입니다. 카테고리를 **전부 삭제**한 뒤에도 다음번 시드 명령(`add`·`category`·`import`·`update`)을 실행하면 위 기본 6개 카테고리로 자동 재시드됩니다(안 A).
+- `list --limit N`에서 N이 1,024 이하이면 전체 거래를 generator로 읽으면서 `heapq.nlargest`로 상위 N건만 메모리에 유지합니다. 정렬용 임시 파일은 만들지 않습니다.
+- limit이 1,024보다 크거나 건수 제한이 없는 조회는 external merge sort를 사용합니다. 1,024건씩 정렬해 임시 JSONL 파일에 쓰고, 최대 32개 파일씩 merge합니다.
+- `search`와 `export`는 원본 파일을 읽으며 조건을 먼저 적용한 뒤 일치하는 거래만 external merge sort로 정렬합니다.
 
-## 주요 명령 예시 (실제 검증 출력)
+`list --limit 5`처럼 적은 건수만 요청해도 원본 파일 전체를 읽습니다.
+메모리에 모든 거래를 모으지는 않지만, 거래가 많을수록 읽기 비용이 늘어납니다.
+external merge sort에는 임시 디스크 공간과 추가 I/O도 필요합니다. 조회가 끝나거나 generator를 닫으면 임시 파일을 삭제하며, 처리 중 오류가 나도 정리합니다.
+`summary`는 원본 파일을 순회하며 해당 월의 금액을 집계합니다.
 
-아래는 로컬 검증 세션(`/tmp/b2ref`, Python 3.14.3)에서 나온 실제 출력입니다.
+## CSV import/export
 
-```text
-$ .venv/bin/python -m budget_app --data-dir /tmp/b2ref category list   # 첫 실행: 기본 카테고리 자동 생성
-parts
-tools
-edu
-transit
-food
-etc
+CSV는 UTF-8과 헤더를 사용합니다. export는 아래 순서로 열을 기록하며, import는 헤더 이름으로 각 값을 찾습니다.
 
-$ printf '2024-01-15\nexpense\nfood\n15000\n점심\nmeal\n' | .venv/bin/python -m budget_app --data-dir /tmp/b2ref add
-날짜(YYYY-MM-DD, 엔터=오늘): 타입(income/expense, 엔터=expense): 카테고리 (parts, tools, edu, transit, food, etc, 엔터=etc): 금액(양수, 엔터=1000원): 메모(선택): 태그(쉼표로 구분, 없으면 엔터): [저장 완료] id=TX-000001
+| 열 | 필수 | 형식 |
+|---|---|---|
+| `date` | 예 | `YYYY-MM-DD`, 실제 날짜 |
+| `type` | 예 | `income` 또는 `expense` |
+| `category` | 예 | 등록된 카테고리 이름 |
+| `amount` | 예 | 양수 정수 |
+| `memo` | 아니오 | 문자열, 없으면 빈값 |
+| `tags` | 아니오 | 쉼표로 구분한 태그 |
 
-$ .venv/bin/python -m budget_app --data-dir /tmp/b2ref list --limit 3
-TX-000001 | 2024-01-15 | expense | food | 15000 | 점심 #meal
+쉼표가 들어가는 셀은 CSV의 따옴표 규칙을 따릅니다.
 
-$ .venv/bin/python -m budget_app --data-dir /tmp/b2ref budget set --month 2024-01 --amount 500000
-[저장 완료] 2024-01 예산 500000원
-
-$ .venv/bin/python -m budget_app --data-dir /tmp/b2ref summary --month 2024-01 --top 3
-2024-01 요약
-총 수입: 0원
-총 지출: 15000원
-잔액: -15000원
-예산: 500000원 (사용률 3.0%)
-지출 TOP 1
-1. food: 15000원
-
-$ .venv/bin/python -m budget_app --data-dir /tmp/b2ref export --out /tmp/b2ref-export.csv --month 2024-01
-[완료] /tmp/b2ref-export.csv (1 records)
-
-$ .venv/bin/python -m budget_app --data-dir /tmp/b2ref import --from /tmp/b2ref-export.csv
-[완료] imported=1, skipped=0
+```csv
+date,type,category,amount,memo,tags
+2026-10-01,expense,food,15000,점심,"meal,work"
 ```
 
-행 표시 규약(직접 선택, README 문서화): `id | 날짜 | 타입 | 카테고리 | 금액 | 메모`를 `" | "`로 결합하고, 태그가 있으면 끝에 ` #tag1,tag2`를 붙입니다. 메모가 비면 해당 칸은 빈 채로 구분자만 남습니다. summary의 `지출 TOP N`은 등록된 카테고리가 요청보다 적으면 실제 개수를 출력합니다(예시에서는 지출 카테고리가 food 1개라 `TOP 1`).
+- export는 `--month`, `--from`, `--to` 중 하나 이상의 조건이 필요합니다.
+- CSV에는 거래 id를 넣지 않습니다. import할 때 새 id를 발급합니다.
+- import는 중복 거래를 자동으로 제거하지 않습니다. 같은 파일을 다시 가져오면 거래가 다시 추가됩니다.
+- 중복되거나 알 수 없는 헤더는 파일 전체를 거부합니다. `memo`, `tags` 열은 생략할 수 있습니다.
+- 각 행의 열 개수가 헤더와 다르면 해당 행을 건너뜁니다. 쉼표가 들어가는 태그·메모는 위 예시처럼 따옴표로 묶어야 합니다.
+- 따옴표 문법이 잘못되었거나 UTF-8로 읽을 수 없는 CSV는 파일 전체를 거부하며 거래를 저장하지 않습니다.
+- 잘못된 행은 건너뛰고 행 번호·원인·힌트를 출력합니다. 유효한 행은 기존 거래와 합쳐 임시 파일에 쓴 뒤 `os.replace`로 저장합니다.
+- 저장할 행이 하나도 없고 잘못된 행이 있었다면 종료 코드 1을 반환합니다. 유효한 행과 잘못된 행이 섞여 있으면 유효한 행을 저장하고 종료 코드 0을 반환합니다.
+- export 대상이 앱의 데이터 파일이면 덮어쓰기를 거부합니다.
 
-오류 경로 예시(트레이스 없음, 원인+힌트):
-
-```text
-$ printf '2024-13-40\nexpense\nfood\n-5\nx\ny\n' | .venv/bin/python -m budget_app --data-dir /tmp/b2ref add
-날짜(YYYY-MM-DD, 엔터=오늘): [오류] 날짜 '2024-13-40'는 달력에 존재하지 않습니다.
-[힌트] 월(01~12)과 일 범위를 확인하세요.
-... (잘못된 값마다 재입력 요구) ...
-날짜(YYYY-MM-DD, 엔터=오늘): [오류] 입력이 끝나 거래 추가를 중단했습니다.
-[힌트] 다시 실행하거나, 파이프 입력이라면 필드 순서대로 값을 보내세요.
-$ echo $?   # 입력 소진으로 종료
-1
-
-$ .venv/bin/python -m budget_app --data-dir /tmp/b2ref delete --id TX-999999
-[오류] id 'TX-999999' 거래가 없습니다.
-[힌트] list나 search로 정확한 id(TX-000001 형식)를 확인하세요.
-$ echo $?
-1
-
-$ .venv/bin/python -m budget_app --data-dir /tmp/b2ref export --out /tmp/x.csv
-[오류] export 조건이 없습니다.
-[힌트] --month YYYY-MM 또는 --from/--to 중 하나 이상을 지정하세요.
-$ echo $?
-2
-```
-
-## import/export CSV 스키마
-
-UTF-8, 헤더 포함, 열 순서 고정:
-
-| 열 | 필수 | 형식 | 설명 |
-|---|---|---|---|
-| `date` | 필수 | YYYY-MM-DD | 거래 날짜(실존 날짜 검증) |
-| `type` | 필수 | income/expense | 타입 |
-| `category` | 필수 | 등록된 이름 | 미등록 카테고리는 행 단위 스킵 |
-| `amount` | 필수 | 양수 정수 | 금액 |
-| `memo` | 선택 | 문자열 | 메모(없으면 빈값) |
-| `tags` | 선택 | 쉼표 구분 | 태그 목록 |
-
-CSV에 id는 없습니다(import 시 새 id를 채번해 병합). export는 `--month` 또는 `--from/--to` 중 하나 이상을 요구합니다(없으면 사용법 오류 2).
-
-**부분 성공 정책(import)**: 모든 줄을 먼저 검증하고, 유효 줄만 **기존분과 합쳐 임시 파일에 스트리밍한 뒤 `os.replace`로 원자 교체**합니다(update/delete와 같은 전략). 즉 한 줄씩 append하지 않으므로, 쓰기 도중 실패해도 원본 `transactions.jsonl`은 바뀌지 않습니다. 잘못된 줄은 저장하지 않고 사유(줄 번호+원인+힌트)를 출력합니다. 모든 줄이 스킵되어 저장분이 0건이면 요약을 출력한 뒤 [오류]/[힌트]와 함께 종료 코드 1로 끝냅니다(일부라도 저장된 혼합 결과는 0).
-
-```text
-$ .venv/bin/python -m budget_app --data-dir /tmp/b2ref import --from partial.csv
-[완료] imported=1, skipped=2
-  줄 3: 카테고리 'ghost' 미등록 (힌트: category add로 먼저 등록하세요.)
-  줄 4: 타입 'oops'는 알 수 없습니다. (힌트: income 또는 expense만 입력할 수 있습니다.)
-```
-
-## 모듈 구조와 책임 (11개 모듈)
+## 모듈 구조
 
 | 모듈 | 책임 |
 |---|---|
-| `__main__.py` | `python -m` 진입점. `main() -> int`로 cli 위임, 종료 코드를 SystemExit으로 전달 |
-| `cli.py` | argparse 파서(_AppParser가 인수 오류를 종료코드 2로 변환), 대화형 add 입력 루프, 명령 dispatch, [오류]/[힌트]·종료 코드 처리, --verbose 로그 설정 |
-| `service.py` | 비즈니스 규칙 단일 파사드(BudgetService): 카테고리 등록 요건, 사용 중 보호, 필터(SearchCriteria) AND 결합, 월 집계, import 부분 성공 |
-| `repositories.py` | 모델 ↔ 파일 창구: TransactionRepository, CategoryRepository, BudgetRepository. 거래 수정·삭제의 스트리밍 재작성 |
-| `storage.py` | 저장 기반 도구: 역순 줄 생성기(iter_lines_reversed), JsonlStore(append·원자 재작성), SequenceFile(id 채번) |
-| `models.py` | 검증된 데이터(frozen dataclass)와 JSONL/CSV 승격·직렬화. 생성 시점 검증으로 하위 계층은 재검증하지 않음 |
-| `parsing.py` | 경계 형식 규칙: parse_date/month/amount/type/tags, 카테고리 이름 검증, id 형식. cli·models·repositories가 공유 |
-| `formatting.py` | stdout 표시 문자열 순수 함수(행 서식·summary 블록) |
-| `decorators.py` | @logged/@timed/@handle_errors와 stderr 로거 설정(명령 출력(stdout)과 분리) |
-| `errors.py` | AppError 계통: cause·hint·exit_code(도메인 1 / 사용법 2) |
-| `__init__.py` | 패키지 문서 |
+| `__main__.py` | `python -m budget_app` 진입점과 종료 코드 전달 |
+| `cli.py` | argparse, 대화형 입력, 명령 실행, 결과와 오류 출력 |
+| `service.py` | 카테고리 사용 규칙, 검색 조건, 월별 집계, import/export |
+| `repositories.py` | 거래·카테고리·예산의 저장과 조회, top N 선택과 external merge sort |
+| `storage.py` | JSONL 읽기·쓰기, 파일 교체, 거래 번호 관리 |
+| `models.py` | dataclass 모델, 필드 검증, JSON/CSV 변환 |
+| `parsing.py` | 날짜·금액·타입·태그·이름의 공통 parsing 규칙 |
+| `formatting.py` | 거래 행과 요약의 출력 형식 |
+| `decorators.py` | 로그·시간 측정·파일 오류 변환 |
+| `errors.py` | 원인·힌트·종료 코드를 담는 예외 |
+| `__init__.py` | 패키지 정의 |
 
-데이터 흐름: `cli`(문자열 인수) → `parsing`(검증된 타입) → `models`(검증된 값 객체) → `service`(규칙) → `repositories`(모델↔dict) → `storage`(dict↔줄). 검증은 경계 한 곳, 출력 서식은 formatting 한 곳에 모읍니다.
+`CLI → service → repository → storage` 순서로 호출합니다.
+입력 parsing과 모델 검증은 공통 규칙을 사용하고, 출력 문자열은 `formatting.py`에서 만듭니다.
 
-## 클래스별 역할
+## 저장 형식과 안전성
 
-| 클래스 | 역할 |
-|---|---|
-| `Transaction` / `NewTransaction` / `Category` / `Budget` | 불변 값 객체. 필드 자체 검증(id 형식·실존 날짜·양수 금액 등) |
-| `TransactionPatch` | update의 옵션 기반 변경분(None이 아닌 필드만 교체). `apply_patch`로 병합 |
-| `SearchCriteria` | search/export 필터 데이터를 AND로 묶어 `matches(tx)` 한 곳에서 판단 |
-| `JsonlStore` | JSONL 파일 1개의 append/순방향·역순 읽기/임시파일 원자 재작성 |
-| `SequenceFile` | meta.json 채번 카운터(peek/advance). id 단조 증가의 근거 |
-| `TransactionRepository` | 거래 저장·id 채번 연결·수정/삭제 스트리밍 재작성 |
-| `CategoryRepository` | 카테고리 CRUD + 첫 실행 기본 카테고리 시드 |
-| `BudgetRepository` | 월 예산 upsert(한 달 한 개)·조회·목록 |
-| `BudgetService` | 위 저장소 3개를 조합하는 파사드. 데코레이터 적용 지점 |
+JSONL은 한 줄씩 독립적으로 읽을 수 있고 금액과 태그 목록의 타입을 보존합니다.
+조회 시에는 JSONL을 한 건씩 읽어 상위 N건을 선택하거나, 일정한 건수씩 정렬해 임시 파일을 merge합니다. CSV는 스프레드시트 등 다른 도구와 데이터를 교환할 때 사용합니다.
 
-## JSONL vs CSV 선택 근거
+수정·삭제·import는 기존 파일을 바로 덮어쓰지 않습니다.
+새 내용을 같은 폴더의 임시 파일에 기록하고 `flush`와 `fsync`를 실행한 뒤 `os.replace`로 교체합니다.
+교체 전에 오류가 나면 임시 파일을 지우고 원본을 유지합니다. export도 같은 방식으로 작성합니다.
 
-저장 포맷은 **JSONL을 선택**했고, CSV는 import/export 교환 용도로만 씁니다.
+이 방식은 파일 하나를 교체할 때의 안전성을 높입니다. 여러 파일을 묶는 transaction이나 동시 실행 간 잠금은 제공하지 않으므로 같은 데이터 폴더를 여러 프로세스에서 동시에 수정하지 않아야 합니다.
 
-| 관점 | JSONL | CSV |
-|---|---|---|
-| 한 줄이 완전한 레코드 | 예 — 역순·부분 읽기와 계약 | 아니오 — 헤더/인용/줄바꿈 이스케이프 때문에 임의 줄부터 읽기 위험 |
-| 타입 보존 | 예 — amount가 int로 저장 | 아니오 — 전부 문자열, 열별 재파싱 필요 |
-| 선택 필드(memo·tags) | 예 — 태그 목록을 배열로 그대로 | 빈약 — 문자열 규칙(쉼표)을 재발명해야 함 |
-| 메모에 쉼표·따옴표 | 큰 문제 없음(JSON 이스케이프) | 인용 규칙 필수, 사용자 데이터라 실수하기 쉬움 |
-| 사람이 직접 편집 | 읽기 가능하나 구문 오류 쉬움 | 엑셀·스프레드시트 관용 |
-| 기계 간 교환 | 보통 | 높음(표준 스키마) |
+## Decorator와 type hint
 
-용돈 기입장의 핵심 요구가 "list/search가 **최신순으로, 전체 로드 없이**"이기 때문에, 한 줄이 완전자립인 JSONL이 역순 생성기와 잘 맞습니다. CSV의 강점(교환)은 export/import 경로에서 그대로 살립니다.
-
-## 10만 건 실측: 병목 후보와 개선안
-
-`scripts/bench_100k.py`가 임시 디렉터리에 10만 건(14MiB)을 만들고 실제 CLI로 측정합니다(로컬 실측 1회).
-
-| 측정 | 결과(여러 회차 변동 범위) |
-|---|---|
-| `list --limit 5` (프로세스째) | 약 0.4초 — 대부분 파이썬 기동. 역순 읽기 자체는 1ms 미만 |
-| `search --category parts` (전체 역순) | 8~12초 |
-| `search --q 강좌` (전체 역순) | 6~9초 |
-| 자식 프로세스 최대 RSS | 약 19MB — 파일 크기와 무관하게 일정 |
-| 프로세스 내 전체 파싱 10만 건 | 4.7~9.2초 |
-
-**병목 후보 판단**: 읽기 범위는 `list --limit`만 유한합니다(역순으로 N건을 채우면 중단). `summary`는 `--month`로 거르더라도 **전체 거래를 순방향으로 훑어야** 하고, `search`도 조건 충족 건을 찾으려면 끝에서 시작해 전 파일을 훑습니다. 즉 summary·search 둘 다 전체 스캔이라 병목이 **디스크 I/O가 아니라 JSON 파싱·줄 순회(CPU)**입니다(파일 14MiB인데 파싱이 초 단위). 정렬은 없음 — 저장 순서=추가 순서로 최신순을 유지합니다.
-
-**구체적 개선안**:
-1. 인덱스 파일(날짜→byte offset 또는 카테고리별 id 목록)을 만들어 search가 조건에 맞는 블록만 seek.
-2. 파싱 단가 낮추기: `--category`만 필요하면 json 전체 대신 문자열 부분 검사로 1차 필터링하고, 통과 건만 역 직렬화(두 패스).
-3. SQLite 표준 라이브러리 이관 — 실데이터에서 JSONL의 'append 단순함'보다 질의 성능이 중요해지면 채택(마이그레이션은 import 재사용).
-4. 자주 쓰는 달집계(summary)를 월별 합계 캐시로 적어두고 거래 쓰기에 무효화.
-
-## update/delete 원자적 교체 전략 (임시 파일 + os.replace)
-
-1. 원본을 순방향으로 스트리밍하면서 대상 줄만 교체/제외한 새 내용을 `transactions.jsonl.<pid>.tmp`에 기록(전체 목록을 메모리에 담지 않음).
-2. temp를 닫기 전 `flush + fsync`으로 디스크에 반영.
-3. `os.replace(temp, 원본)` — POSIX 원자적 rename이라 읽는 쪽은 '옛날 파일' 아니면 '새 파일'만 본다.
-4. **실패 시 롤백**: 1~2단계 예외(검증 오류·디스크 오류)면 temp만 삭제하고 원본은 무변경. 재작성 도중 데이터 오류가 나면(예: 손상 줄) 3단계까지 도달하지 못하므로 "반쯤 바뀐 파일"이 생길 수 없습니다.
-5. 대상 id가 없으면 재작성이 완료된 뒤 NotFoundError를 낸 — 교체 대상이 없어 결과 파일은 원본과 동일합니다.
-
-export CSV도 같은 전략(임시 파일 → os.replace)으로, 쓰기 실패 시 반쪽 CSV를 남기지 않습니다. 그리고 `--out`이 앱 데이터 파일(`transactions.jsonl` 등 4개)과 같은 경로면 자료 유실을 막기 위해 거부합니다([오류]/[힌트]·종료 코드 1).
-
-## 데코레이터 사용 예 (decorators.py)
+서비스 메서드에는 다음 decorator를 적용합니다.
 
 ```python
-@handle_errors          # OSError → [오류]/[힌트]를 담은 StorageError로 변환
-@timed                  # 소요 시간 ms를 DEBUG 로그로
-@logged                 # 시작/완료 흔적을 DEBUG 로그로
+@handle_errors  # OSError를 StorageError로 변환
+@timed          # 실행 시간을 DEBUG 로그로 기록
+@logged         # 호출 시작·완료를 DEBUG 로그로 기록
 def add_transaction(self, draft: NewTransaction) -> Transaction: ...
 ```
 
-- 출력은 stderr 로거 전용이라 stdout의 명령 결과와 섞이지 않습니다.
-- `--verbose`를 켜면 DEBUG로 드러나고, 끄면 CRITICAL 스레시홀드로 조용해집니다(동작은 동일).
-- 지연 생성기(list/search)는 감싸지 않습니다 — 생성기 함수를 데코레이트하면 'iterator 생성'까지만 재서 오해를 부르기 때문입니다.
+로그는 stderr로 보내므로 stdout의 명령 결과와 분리됩니다. `--verbose`를 지정하면 DEBUG 로그가 표시됩니다.
+`iter_*` 메서드에는 `timed`를 적용하지 않습니다. generator 함수에 적용하면 실제 순회 시간이 아니라 iterator를 만드는 시간만 측정하기 때문입니다.
 
-## 타입 힌트 정책
+함수·메서드와 dataclass 필드에 type hint를 사용합니다.
+타입이나 허용 값이 정해진 필드는 `Literal`, `Iterator[Transaction]` 등으로 표시합니다.
+모델은 `frozen=True, slots=True`인 dataclass이며, 값 변경은 `dataclasses.replace`로 새 객체를 만드는 방식입니다.
 
-- 모든 함수·메서드 시그니처와 dataclass 필드에 타입 힌트를 붙였습니다(`from __future__ import annotations` 사용).
-- `TransactionType = Literal["income", "expense"]`처럼 값 집합이 정해진 필드는 Literal로, `Iterator[Transaction]`, `dict[str, object]` 등 반환 컨테이너까지 명시했습니다.
-- 저장된 JSON을 읽는 지점(`from_json_dict`)이 신뢰 경계입니다: 여기서 타입을 검사해 모델을 만들고, 내부 코드에서는 검증된 타입만 다룹니다.
-- 모든 모델은 `frozen=True, slots=True`: 생성 후 변경이 없고(변경은 `dataclasses.replace`로 새 객체), 실수 대입이 즉시 잡힙니다.
+## 오류와 종료 코드
 
-## 오류 처리와 종료 코드
+오류는 stdout에 `[오류] <원인>`과 `[힌트] <해결 방법>`으로 출력합니다.
+traceback은 출력하지 않습니다. decorator의 실행 로그는 stderr로 보냅니다.
 
-- 사용자에게 보이는 오류는 전부 두 줄: `[오류] <원인>` + `[힌트] <해결 힌트>` (stdout 출력. 파이프로 결과를 받는 스크립트에서도 보이게 함 — 데코레이터 로그만 stderr).
-- 스택 트레이스는 출력하지 않습니다. argparse 실패도 `_AppParser.error`가 [오류]/[힌트]로 변환하고, 예측 못 한 예외도 최외곽에서 잡혀 안내 문구로 나갑니다. `--verbose`여도 트레이스는 나오지 않습니다(내부 오류는 stderr에 `[로그] ERROR 예상치 못한 내부 오류: ...` 한 줄만 남음). 파일·권한 오류(OSError)는 데코레이터를 거치지 않은 경로에서도 [오류]/[힌트]로 변환됩니다.
+| 상황 | 종료 코드 |
+|---|---:|
+| 성공 | 0 |
+| 입력·저장 데이터 오류, 없는 id, 카테고리 충돌, 파일 오류 | 1 |
+| 잘못된 명령·옵션, 필수 옵션 누락 | 2 |
 
-| 상황 | 출력 | 종료 코드 |
-|---|---|---|
-| 성공 | 명령 결과 | 0 |
-| 입력값·저장 데이터 형식 오류(ValidationError) | [오류]+[힌트] | 1 |
-| 대상 id 없음(NotFoundError) | [오류]+[힌트] | 1 |
-| 사용 중 카테고리 삭제·중복(category ConflictError) | [오류]+[힌트] | 1 |
-| 파일·권한 문제(StorageError) | [오류]+[힌트] | 1 |
-| 대화형 입력 EOF/Interrupt | [오류]+[힌트] | 1 |
-| import 전부 스킵(imported=0, skipped>0) | [완료] 요약 + [오류]+[힌트] | 1 |
-| export --out이 앱 데이터 파일 | [오류]+[힌트] | 1 |
-| 예상치 못한 내부 오류 | [오류]+[힌트] | 1 |
-| 잘못된 명령·옵션, 필수 옵션 누락, 조건 없는 export(UsageError) | [오류]+[힌트] | 2 |
-
-## 테스트·벤치 실행
+## 테스트와 성능 측정
 
 ```bash
-.venv/bin/python -m unittest discover -s tests -v   # 단위+종단간 99개
-.venv/bin/python scripts/bench_100k.py              # 10만 건 실측(임시 디렉터리)
+.venv/bin/python -m unittest discover -s tests -v
+.venv/bin/python scripts/bench_100k.py
 ```
 
-테스트는 `test_models.py`(경계 검증), `test_storage.py`(역순 생성기·원자 교체·채번 회복), `test_cli.py`(실제 프로세스 10개 명령·오류 코드·프로세스 간 영속성·트레이스 부재), `test_bench_units.py`(ru_maxrss 단위 정규화)로 나뉩니다. 데이터는 전부 임시 디렉터리에 만들므로 저장소 `data/`를 건드리지 않습니다.
+테스트와 성능 측정은 임시 폴더를 사용하며 저장소의 `data/`는 변경하지 않습니다.
 
-## 구현 상태
+- `test_models.py`: parsing, 모델 검증, 데이터 변환, 6자리 이후 ID, 빈 달의 요약 형식
+- `test_storage.py`: 날짜·ID 순서, top N 선택과 merge, 파일 교체 실패, 거래 번호 복구
+- `test_cli.py`: 실제 CLI 프로세스의 명령·오류·저장 유지, 초기 파일 생성, CSV 오류 처리
+- `test_bench_units.py`: 운영체제별 최대 RSS 단위 변환
 
-10개 명령·4개 저장 파일·스트리밍·데코레이터·원자 교체·부분 import 정책을 구현하고, 2026-09-26 로컬(Python 3.14.3)에서 unittest 99개 통과와 위 검증 예시의 종료 코드를 확인했습니다. 참고용 모범 답안 브랜치(`ref/b2-1-solution`)의 대응 설명은 `REFERENCE.md`를 보세요(제출용 아님).
+성능 측정 스크립트는 임시 폴더에 거래 10만 건을 만들고 목록·검색의 실행 시간과 자식 프로세스의 최대 RSS를 출력합니다.
+조회마다 전체 파일을 읽으므로 실행 시간은 데이터 크기의 영향을 받습니다. external merge sort의 임시 디스크 사용량은 정렬할 거래 수에 따라 증가합니다.
+측정 결과는 실행 환경과 데이터에 따라 달라집니다. 조회 성능이 중요해지면 인덱스나 SQLite 도입을 검토할 수 있습니다.
+
+코드를 읽을 때 참고할 파일과 테스트는 [REFERENCE.md](REFERENCE.md)에 정리했습니다.

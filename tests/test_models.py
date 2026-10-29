@@ -7,6 +7,7 @@ from dataclasses import fields as _fields
 from dataclasses import replace as _replace
 
 from budget_app.errors import ValidationError
+from budget_app.formatting import summary_rows
 from budget_app.models import (
     Budget,
     Category,
@@ -17,6 +18,7 @@ from budget_app.models import (
 )
 from budget_app.parsing import (
     format_transaction_id,
+    is_transaction_id,
     parse_amount,
     parse_date,
     parse_month,
@@ -63,6 +65,27 @@ class ParseHelperTest(unittest.TestCase):
     def test_format_transaction_id_pads_six(self) -> None:
         self.assertEqual(format_transaction_id(1), "TX-000001")
         self.assertEqual(format_transaction_id(123456), "TX-123456")
+
+    def test_transaction_id_supports_six_digit_boundary_and_larger_numbers(self) -> None:
+        for seq in (1, 999999, 1000000, 10000000):
+            with self.subTest(seq=seq):
+                tx_id = format_transaction_id(seq)
+                self.assertTrue(is_transaction_id(tx_id))
+                self.assertEqual(int(tx_id[3:]), seq)
+        self.assertEqual(format_transaction_id(999999), "TX-999999")
+        self.assertEqual(format_transaction_id(1000000), "TX-1000000")
+
+    def test_transaction_id_requires_ascii_digits_and_positive_number(self) -> None:
+        for tx_id in ("TX-000000", "TX-0000000", "TX-1", "TX-１２３４５６", "TX-١٢٣٤٥٦",
+                      "TX--000001", "TX-000001\n", " TX-000001", "TX-000001x"):
+            with self.subTest(tx_id=tx_id):
+                self.assertFalse(is_transaction_id(tx_id))
+
+    def test_format_transaction_id_rejects_invalid_sequence(self) -> None:
+        for seq in (0, -1, True, False, 1.0, "1"):
+            with self.subTest(seq=seq):
+                with self.assertRaises(ValidationError):
+                    format_transaction_id(seq)
 
 
 class NewTransactionTest(unittest.TestCase):
@@ -147,6 +170,10 @@ class TransactionTest(unittest.TestCase):
         with self.assertRaises(ValidationError):
             Transaction(id="TX-1", type="expense", date="2024-01-15", amount=1, category="etc")
 
+    def test_transaction_roundtrips_id_after_six_digit_boundary(self) -> None:
+        tx = Transaction.from_draft("TX-1000000", self._draft())
+        self.assertEqual(Transaction.from_json_dict(tx.to_json_dict()), tx)
+
     def test_from_json_dict_requires_core_fields(self) -> None:
         with self.assertRaises(ValidationError):
             Transaction.from_json_dict({"id": "TX-000001", "type": "expense"})
@@ -211,6 +238,21 @@ class CategoryBudgetTest(unittest.TestCase):
             Budget(month="2024-01", amount=-1)
         with self.assertRaises(ValidationError):
             Budget.from_json_dict({"month": "2024-01", "amount": "10"})
+
+
+class SummaryFormattingTest(unittest.TestCase):
+    def test_empty_month_with_budget_shows_notice_and_budget(self) -> None:
+        rows = summary_rows("2026-10", 0, 0, Budget("2026-10", 10000), ())
+        self.assertIn("해당 월 거래가 없습니다.", rows)
+        self.assertIn("예산: 10000원 (사용률 0.0%)", rows)
+
+    def test_empty_month_without_budget_keeps_existing_notice(self) -> None:
+        self.assertEqual(summary_rows("2026-10", 0, 0, None, ()),
+                         ["2026-10: 그 달 데이터가 없습니다."])
+
+    def test_month_with_transactions_has_no_empty_notice(self) -> None:
+        rows = summary_rows("2026-10", 1000, 1000, Budget("2026-10", 10000), ())
+        self.assertNotIn("해당 월 거래가 없습니다.", rows)
 
 
 if __name__ == "__main__":

@@ -1,11 +1,13 @@
-"""storage.py·repositories.py 검증: 역순 생성기, 원자 교체, 채번 단조성."""
+"""storage와 repository 검증: 역순 generator, 파일 교체, 거래 ID 관리."""
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
 from pathlib import Path
+from dataclasses import replace
 from unittest import mock
 
 from budget_app.errors import ConflictError, NotFoundError, StorageError, ValidationError
@@ -132,6 +134,13 @@ class SequenceFileTest(unittest.TestCase):
         )
         self.assertEqual(empty_fallback.peek(), 1)
 
+    def test_counter_rejects_boolean_noninteger_and_nonpositive_values(self) -> None:
+        for value in (True, False, 0, -1, 1.5, "2", None):
+            with self.subTest(value=value):
+                self.seq.path.write_text(json.dumps({"next_seq": value}), encoding="utf-8")
+                with self.assertRaises(ValidationError):
+                    self.seq.peek()
+
 
 class TransactionRepositoryTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -150,6 +159,31 @@ class TransactionRepositoryTest(unittest.TestCase):
             self.repo.add(make_draft(amount=i))
         recent = list(self.repo.iter_newest_first(2))
         self.assertEqual([tx.id for tx in recent], ["TX-000003", "TX-000002"])
+
+    def test_date_order_survives_multiple_merge_passes_and_cleans_temp_files(self) -> None:
+        dates = ["2024-01-09", "2024-01-01", "2024-01-04", "2024-01-02",
+                 "2024-01-08", "2024-01-03", "2024-01-06", "2024-01-05", "2024-01-07"]
+        self.repo.add_many([replace(make_draft(), date=day) for day in dates])
+        real_tempdir = tempfile.TemporaryDirectory
+        with real_tempdir() as parent:
+            with mock.patch("budget_app.repositories.SORT_CHUNK_SIZE", 2), \
+                 mock.patch("budget_app.repositories.MERGE_WIDTH", 2), \
+                 mock.patch("budget_app.repositories.tempfile.TemporaryDirectory",
+                            side_effect=lambda **kw: real_tempdir(dir=parent, **kw)):
+                result = list(self.repo.iter_newest_first())
+                self.assertEqual([tx.date for tx in result], sorted(dates, reverse=True))
+                self.assertEqual(list(Path(parent).iterdir()), [])
+                stream = self.repo.iter_newest_first()
+                self.assertEqual(next(stream).date, "2024-01-09")
+                stream.close()
+                self.assertEqual(list(Path(parent).iterdir()), [])
+
+    def test_seven_digit_ids_sort_numerically_on_same_date(self) -> None:
+        (self.data_dir / "meta.json").write_text('{"next_seq":999999}', encoding="utf-8")
+        saved = self.repo.add_many([make_draft(), make_draft()])
+        self.assertEqual([tx.id for tx in saved], ["TX-999999", "TX-1000000"])
+        self.assertEqual([tx.id for tx in self.repo.iter_newest_first()],
+                         ["TX-1000000", "TX-999999"])
 
     def test_delete_then_add_never_reuses_id(self) -> None:
         self.repo.add(make_draft(amount=1))
@@ -213,6 +247,40 @@ class TransactionRepositoryTest(unittest.TestCase):
         with self.assertRaises(ValidationError) as ctx:
             self.repo.add(make_draft(amount=2))
         self.assertIn("meta.json", ctx.exception.hint)
+
+    def test_stale_counter_blocks_add_and_import_without_changing_files(self) -> None:
+        self.repo.add_many([make_draft(), make_draft()])
+        meta = self.data_dir / "meta.json"
+        transactions = self.data_dir / "transactions.jsonl"
+        for value in (True, 1, 2, 0, -1):
+            for bulk in (False, True):
+                with self.subTest(value=value, bulk=bulk):
+                    meta.write_text(json.dumps({"next_seq": value}), encoding="utf-8")
+                    before = (meta.read_bytes(), transactions.read_bytes())
+                    repo = TransactionRepository(self.data_dir)
+                    with self.assertRaises(ValidationError):
+                        if bulk:
+                            repo.add_many([make_draft(), make_draft()])
+                        else:
+                            repo.add(make_draft())
+                    self.assertEqual((meta.read_bytes(), transactions.read_bytes()), before)
+
+    def test_counter_ahead_of_existing_ids_preserves_reserved_numbers(self) -> None:
+        self.repo.add(make_draft())
+        (self.data_dir / "meta.json").write_text('{"next_seq": 10}', encoding="utf-8")
+        self.assertEqual(self.repo.add(make_draft()).id, "TX-000010")
+
+    def test_invalid_existing_id_blocks_add_without_modifying_files(self) -> None:
+        self.repo.add(make_draft())
+        transactions = self.data_dir / "transactions.jsonl"
+        record = json.loads(transactions.read_text(encoding="utf-8"))
+        record["id"] = "broken"
+        transactions.write_text(json.dumps(record) + "\n", encoding="utf-8")
+        meta = self.data_dir / "meta.json"
+        before = (meta.read_bytes(), transactions.read_bytes())
+        with self.assertRaises(ValidationError):
+            self.repo.add(make_draft())
+        self.assertEqual((meta.read_bytes(), transactions.read_bytes()), before)
 
 
 class CategoryRepositoryTest(unittest.TestCase):

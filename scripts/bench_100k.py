@@ -1,8 +1,8 @@
 """100,000건 실측 벤치(표준 라이브러리만 사용).
 
 임시 디렉터리에 거래 10만 건을 만들어 두고 실제 CLI 프로세스로
-`list --limit 5`와 `search` 걸림 시간을 쟌다. 자식 프로세스 최대 RSS로
-역순 생성기가 메모리를 절약하는지도 함께 보고한다. 저장소 안 `data/`는
+`list --limit 5`와 `search` 실행 시간을 잰다. 자식 프로세스의 최대 RSS와
+날짜 정렬 generator의 실행 시간도 출력한다. 저장소 안 `data/`는
 건드리지 않는다.
 
 실행: .venv/bin/python scripts/bench_100k.py
@@ -94,7 +94,7 @@ def main() -> int:
         rss_after = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
         peak_bytes = max(child_rss_bytes(rss_before), child_rss_bytes(rss_after))
         print(f"list --limit 5            : {list_elapsed * 1000:.1f}ms")
-        print(f"search --category parts   : {search_elapsed * 1000:.1f}ms (전체 역순 스캔)")
+        print(f"search --category parts   : {search_elapsed * 1000:.1f}ms (전체 파일 읽기·필터·정렬)")
         print(f"search --q 강좌            : {narrow_elapsed * 1000:.1f}ms")
         print(f"자식 프로세스 최대 RSS      : {peak_bytes / 1024 / 1024:.1f}MiB")
 
@@ -105,9 +105,9 @@ def main() -> int:
         started = time.perf_counter()
         top5 = list(repo.iter_newest_first(5))
         bounded_read = time.perf_counter() - started
-        print(f"프로세스 내 전체 파싱 {count:,}건 : {full_parse:.2f}초")
-        print(f"프로세스 내 역순 5건        : {bounded_read * 1000:.2f}ms (블록+5건 메모리)")
-        print(f"샘플 최신순 id: {top5[0].id} … {top5[-1].id}")
+        print(f"프로세스 내 전체 parsing {count:,}건 : {full_parse:.2f}초")
+        print(f"프로세스 내 최신 5건        : {bounded_read * 1000:.2f}ms (전체 읽기·최신 5건 유지)")
+        print(f"거래일 내림차순 id 예시: {top5[0].id} … {top5[-1].id}")
         return 0
     finally:
         shutil.rmtree(data_dir, ignore_errors=True)

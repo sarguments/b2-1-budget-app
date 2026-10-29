@@ -1,7 +1,7 @@
-"""stdout 출력 문자열 만드는 순수(format-only) 모듈.
+"""stdout에 출력할 문자열을 만드는 모듈.
 
-데이터(모델)와 화면 문자열을 분리해서, cli는 조립만 하고 서수는 여기 있다.
-순수 함수만 담으므로 저장소/입력과 무관하게 단위 테스트로 검증하기 쉽다.
+모델 데이터의 출력 형식은 이 모듈에서 정의하고, CLI는 결과를 출력한다.
+파일이나 입력 상태를 바꾸지 않는 순수 함수로 구성한다.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ def summary_rows(
     budget: Budget | None,
     top_expense: Sequence[tuple[str, int]],
 ) -> list[str]:
-    """summary --month 출력 블록. 거래도 예산도 없을 때만 안내 한 줄만 낸다."""
+    """summary --month 출력 블록. 거래와 예산이 모두 없으면 안내 문구만 반환한다."""
     if income == 0 and expense == 0 and budget is None:
         return [f"{month}: 그 달 데이터가 없습니다."]
     rows = [
@@ -48,6 +48,8 @@ def summary_rows(
         f"총 지출: {expense}원",
         f"잔액: {income - expense}원",
     ]
+    if income == 0 and expense == 0:
+        rows.append("해당 월 거래가 없습니다.")
     if budget is not None:
         usage_pct = expense / budget.amount * 100.0
         rows.append(f"예산: {budget.amount}원 (사용률 {usage_pct:.1f}%)")

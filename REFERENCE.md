@@ -1,59 +1,53 @@
-# REFERENCE — B2-1 용돈 기입장 참고 구현 (제출용 아님)
+# 참고 구현 읽기 안내
 
-> **이 브랜치(`ref/b2-1-solution`)는 참고용 모범 답안이다. 과제 제출에 사용하지 말 것.**
-> 채점용 제출은 제출 브랜치에서 **본인이 직접** 작성한 구현이어야 한다. 이 문서는
-> "요구사항이 코드·문서에서 어디 어떻게 충족되는지" 짚어 주는 지도이고, README의
-> 근거 설명을 읽은 뒤 자기 구현과 **비교**하는 교재로 쓴다. 복사해서 제출하면
-> 미션 취지(직접 수행·이해·재현)에 어긋난다.
+`ref/b2-1-solution`은 구조와 동작을 비교하기 위한 참고 브랜치입니다.
+실행 방법과 저장 정책은 [README.md](README.md)를 참고하세요.
 
-## 이 참고 구현의 위치
+## 읽는 순서
 
-- 코드: `budget_app/`(11개 모듈) + `tests/`(99개 unittest) + `scripts/bench_100k.py`
-- 설명: `README.md`(실행 방법·저장 형식·모듈 책임·JSONL vs CSV·병목 분석·원자 교체·종료 코드 표)
-- 검증 근거: 2026-09-26 로컬(Python 3.14.3, `.venv`)에서 아래 명령으로 실행 확인
-  - `.venv/bin/python -m unittest discover -s tests -v` → 99 tests OK
-  - 독립 리뷰 지적 반영(2차): export가 데이터 파일을 덮어쓰지 못하게 차단, import를 `os.replace` 원자 저장으로 변경, 전 행 무효 import는 종료 1, `--verbose`에서도 traceback 미출력(OSError를 원인+힌트로 변환), CSV 고정 스키마 검증(중복·미지 열 거부), 거래 없는 달의 예산 표시, `meta.json` 소실 시 기존 id에서 채번 복구
-  - `.venv/bin/python scripts/bench_100k.py` → 10만 건 list/search 실측
-  - README 「주요 명령 예시」의 모든 출력과 종료 코드는 실제 실행 결과
+1. `budget_app/cli.py`의 `build_parser`와 `_dispatch`에서 명령이 연결되는 흐름을 봅니다.
+2. `service.py`에서 명령별 규칙을 확인합니다.
+3. `repositories.py`와 `storage.py`에서 데이터가 파일에 저장되는 과정을 봅니다.
+4. `models.py`와 `parsing.py`에서 입력과 저장 데이터를 검증하는 규칙을 확인합니다.
+5. `tests/`에서 정상 입력과 오류 입력의 예상 결과를 확인합니다.
 
-## 사용 방법(권장 순서)
+## 기능별 코드와 테스트
 
-1. `python -m budget_app --help`로 10개 명령의 윤곽을 잡고, README 「실행 방법」을 읽는다.
-2. 미션 원문의 요구를 하나씩 자기 구현에 반영한 뒤, 같은 요구가 이 참고 구현에서
-   **어느 파일·어느 함수**에서 어떻게 풀렸는지 아래 표와 견준다.
-3. 표에 없는 자기만의 판단(문구·파일명·기본값)은 그대로 두고, 표에서 **이해가 안 되는
-   항목만** README 상세 절로 들어가 읽는다.
-4. 최종 제출 전에 이 저장소 코드를 커밋·복사하지 않았는지 `git status`로 확인한다.
+| 기능 | 코드 | 확인할 테스트 |
+|---|---|---|
+| 명령과 도움말 | `cli.build_parser`, `cli._dispatch` | `test_cli.HelpAndSeedTest` |
+| 거래 추가와 저장 유지 | `BudgetService.add_transaction`, `TransactionRepository.add` | `test_cli.AddListPersistenceTest` |
+| 카테고리 관리 | `CategoryRepository`, `BudgetService.remove_category` | `test_cli.CategoryPolicyTest` |
+| 검색과 월별 집계 | `SearchCriteria.matches`, `BudgetService.summarize` | `test_cli.SearchSummaryBudgetTest` |
+| 거래 수정·삭제 | `TransactionRepository._rewrite` | `test_cli.UpdateDeleteTest`, `test_storage.TransactionRepositoryTest` |
+| CSV import/export | `BudgetService.import_csv`, `BudgetService.export_csv` | `test_cli.ImportExportTest` |
+| 날짜·ID 순서, top N 선택과 streaming | `TransactionRepository.iter_newest_first`, `_merge_runs` | `test_storage.TransactionRepositoryTest` |
+| 초기 저장 파일 생성 | `BudgetService.__init__` | `test_cli.HelpAndSeedTest` |
+| 파일 교체와 실패 처리 | `JsonlStore.replace_stream` | `test_storage.JsonlStoreTest` |
+| 거래 번호 | `SequenceFile`, `TransactionRepository` | `test_storage.SequenceFileTest`, `test_storage.TransactionRepositoryTest` |
+| 모델과 parsing | `models.py`, `parsing.py` | `test_models.py` |
+| 로그·시간 측정·오류 변환 | `decorators.py`, `cli.main` | `test_cli`의 verbose·파일 오류 테스트 |
+| 성능 측정 | `scripts/bench_100k.py` | `test_bench_units.py` |
 
-## AI 채점 16개 항목 ↔ 구현/문서 대응표
+## 비교할 설계 선택
 
-| # | 채점 항목 | 코드 근거 | 문서/검증 근거 |
-|---|---|---|---|
-| 1 | 모든 서브커맨드 구현 + 단위 실행 증거 | `cli.py` 10개 cmd_*, `service.py` | README 「주요 명령 예시」, `tests/test_cli.py`(서브커맨드별 `--help` 포함) |
-| 2 | 저장 파일 3개 이상 + 재시작 후 지속 | `repositories.py` 3저장소 + `storage.py` `SequenceFile`(meta.json 포함 4개) | README 「저장 파일 위치·형식」, `test_cli.py::test_list_row_format_and_persistence_across_processes`(프로세스 분리) |
-| 3 | 카테고리 add/list/remove + 사용 중 삭제 정책 | `CategoryRepository.add/remove`, `BudgetService.remove_category`(in-use 차단) | README 오류 예시, `test_cli.py::CategoryPolicyTest` |
-| 4 | budget set 저장 + summary 사용률·초과 경고 | `BudgetRepository.upsert`, `formatting.summary_rows` | README summary 예시(사용률·[경고] 줄), `test_cli.py::test_summary_shows_budget_usage_and_top` |
-| 5 | CSV 헤더/인코딩 + 고정 스키마 + 테스트 파일 생성 | `models.CSV_HEADER`, `service.import_csv/export_csv`(utf-8) | README 스키마 표, `test_cli.py::test_export_writes_schema_header_then_import_roundtrip` |
-| 6 | 오류 출력(트레이스 없음, 원인+힌트) | `errors.py` cause/hint, `cli.main` 최외곽 catch, `_print_error` | README 「오류 처리와 종료 코드」, 모든 CLI 테스트가 `Traceback` 부재를 함께 단언 |
-| 7 | 오류 시 비0 종료 + 테스트 스크립트 | `AppError.exit_code`(1/2), `cli.main` 반환 | `tests/` 전체, 검증 리포트의 `exit=1`/`exit=2` 출력 |
-| 8 | 모듈 3개 이상 분리 + 책임 문서화 | `budget_app/` 11모듈(parsing=models 분리로 검증 규칙과 값 객체를 분리) | README 「모듈 구조와 책임」 표 |
-| 9 | 클래스 2개 이상 + 역할/인스턴스 책임 | `Transaction/Category/Budget`(모델), 3 Repository, `BudgetService`, `JsonlStore/SequenceFile` | README 「클래스별 역할」 |
-| 10 | 임시 파일 원자 교체 + 롤백 | `storage.JsonlStore.replace_stream`(temp+fsync+os.replace, 실패 시 temp 삭제) | README 「원자적 교체 전략」, `test_storage.py::test_replace_stream_failure_keeps_original_and_removes_temp` |
-| 11 | 생성자 스트리밍(list/search, 메모리 절약) | `storage.iter_lines_reversed`(역순 블록 읽기), `repositories.iter_newest_first` | README 「10만 건 실측」(list가 파일 크기와 무관한 밀리초), `test_storage.py::IterLinesReversedTest` |
-| 12 | 로그/시간/예외 데코레이터 별도 모듈 + 사용 | `decorators.py` `logged/timed/handle_errors`, `service.py` 메서드 적용 | README 「데코레이터 사용 예」, `test_cli.py::test_verbose_writes_decorator_logs_to_stderr_only` |
-| 13 | 타입 힌트 전반 + 설명 | 모든 함수·dataclass 필드 시그니처, `Literal`, frozen slots (`parsing.py`가 형식 규칙, `models.py`가 값 객체) | README 「타입 힌트 정책」 |
-| 14 | JSONL vs CSV 비교 + 선택 근거 | `storage.py`(JSONL 선택 구현) | README 「JSONL vs CSV」 비교 표 |
-| 15 | 10만 건 병목 후보 + 개선안 | `scripts/bench_100k.py` 실측 | README 「병목 후보와 개선안」(파싱/스캔/디스크 I/O와 수치) |
-| 16 | 부분 import 실패 정책(롤백/보고/유도) | `service.import_csv`(전 줄 사전검증 → 유효분만 단일 append, skip 사유 목록) | README 「import 부분 성공」, `test_cli.py::test_partial_import_stores_valid_skips_invalid` |
+- **거래일순 목록**: 날짜가 최신인 순서로, 같은 날짜에서는 ID의 숫자가 큰 순서로 출력합니다. 과거 날짜의 추가·날짜 수정 후에도 순서가 유지되는지 확인하세요.
+- **Top N 선택**: list의 limit이 1,024 이하이면 generator로 전체 파일을 읽고 `heapq.nlargest`로 상위 N건만 메모리에 유지합니다. 임시 정렬 파일을 만들지 않는지 확인하세요.
+- **External merge sort**: 큰 limit이나 무제한 조회는 1,024건씩 정렬한 임시 JSONL을 최대 32개씩 merge합니다. search/export는 조건에 맞는 거래만 정렬합니다. 입력 파일은 모두 읽지만 메모리에는 전체 거래를 모으지 않습니다. 정렬 완료·generator 종료·오류 시 임시 파일이 정리되는지도 확인하세요.
+- **초기 파일 생성**: 처음 실행하면 3개의 JSONL 저장 파일을 만들고 기존 파일은 보존합니다.
+- **거래 번호 저장**: 거래를 삭제해도 다음 번호를 따로 보관합니다. ID는 최소 6자리이며 1000000 이후에도 늘어납니다. 번호 파일이 없거나 잘못된 경우도 확인하세요.
+- **빈 달 요약**: 거래가 없는 달에 예산만 등록돼 있으면 거래 없음 안내와 예산 사용률을 함께 표시합니다.
+- **파일 교체**: 수정·삭제·import 중 쓰기가 실패했을 때 기존 거래 파일이 유지되는지 확인합니다.
+- **검색 조건**: `SearchCriteria.matches`에서 모든 조건을 AND로 결합합니다.
+- **입력 재시도**: `_prompt`에 필드별 parsing 함수를 전달해 재입력 흐름을 공유합니다.
+- **Generator 측정**: iterator를 만드는 시간과 실제로 순회하는 시간을 구분합니다.
+- **Import 부분 성공**: 유효한 행만 저장하고, 건너뛴 행의 이유를 출력합니다. 같은 CSV를 다시 가져오면 중복 거래가 생긴다는 점도 확인하세요.
 
-## 자기 구현과 비교할 때 볼 핵심 판단 포인트
+## 실행 확인
 
-- **id 채번**: 삭제 후 재추가 시 id가 재사용되지 않게 `meta.json` 별도 카운터로
-  단조 증가를 보장(`SequenceFile.advance` 순서: peek→확정 쓰기→거래 append).
-- **list 최신순**: 파일 앞에서 읽으면 O(n)이라 **역순 블록 읽기**로 최근 건만 건드린다.
-- **update/delete 원자성**: 전체 재작성을 temp 파일로 만들고 `os.replace`(POSIX
-  원자적 rename)로만 확정. 실패 시 temp 삭제 = 원본 무변경.
-- **search/export 필터**: `SearchCriteria.matches` 한 곳에서 AND 결합 — 조건 추가 시
-  조합 Explosion 없이 확장.
-- **대화형 add 재입력**: 필드별 파서를 `_prompt(parse)`에 주입해 같은 루프를 6개
-  필드에서 공유(중복 없는 retry).
+```bash
+.venv/bin/python -m unittest discover -s tests -v
+.venv/bin/python scripts/bench_100k.py
+```
+
+테스트는 정상·오류 입력과 저장 동작을 확인합니다. 성능 측정은 거래 10만 건으로 현재 환경의 목록·검색 실행 시간과 메모리 사용량을 출력합니다.

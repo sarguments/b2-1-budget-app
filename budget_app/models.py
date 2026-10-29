@@ -1,9 +1,8 @@
-"""용돈 기입장 검증된 데이터 모델.
+"""용돈 기입장의 데이터 모델과 필드 검증.
 
-필드의 '형식 규칙'은 parsing.py에 있고, 이 파일은 규칙을 통과한 값만 담는
-불변 모양(frozen dataclass)을 정의한다. 모델 생성 시점(`__post_init__`)에
-한 번 더 검증하므로, 저장/검색 코드 이후에서는 타입·범위가 보장된 값만
-다룬다(parse-don't-validate). 변경은 항상 새 객체 생성(dataclasses.replace).
+parsing.py의 규칙으로 입력을 검증하고 frozen dataclass에 저장한다.
+`__post_init__`에서 필드의 타입과 범위를 확인한다. 값 변경은
+`dataclasses.replace`로 새 객체를 만들어 처리한다.
 """
 
 from __future__ import annotations
@@ -26,7 +25,7 @@ from budget_app.parsing import (
     validate_category_name,
 )
 
-#: import/export CSV의 고정 헤더(원문 요구 스키마).
+#: import/export CSV의 고정 헤더.
 CSV_HEADER = ("date", "type", "category", "amount", "memo", "tags")
 #: CSV에서 반드시 있어야 하는 필수 열. memo/tags는 없으면 빈값으로 본다.
 CSV_REQUIRED_COLUMNS = ("date", "type", "category", "amount")
@@ -34,7 +33,7 @@ CSV_REQUIRED_COLUMNS = ("date", "type", "category", "amount")
 
 @dataclass(frozen=True, slots=True)
 class NewTransaction:
-    """id 배정 전 거래 초안. 저장소가 id를 붙여 `Transaction`으로 승격한다."""
+    """id 발급 전 거래 데이터. 저장소에서 id를 붙여 `Transaction`을 만든다."""
 
     type: TransactionType
     date: str
@@ -59,10 +58,10 @@ class NewTransaction:
 
     @classmethod
     def from_csv_row(cls, row: Mapping[str, object]) -> "NewTransaction":
-        """import CSV 한 줄 → 초안. 필수 열 결손·형식 오류는 ValidationError.
+        """import CSV 한 줄 → 초안. 필수 값 누락이나 형식 오류는 ValidationError.
 
-        생성자에 원문 문자열을 넘기지 않고 경계에서 먼저 파싱해, 필드
-        애너테이션(int·TransactionType)과 실제 값 타입을 맞춘다.
+        입력 문자열을 먼저 parse해서 필드
+        annotation(int·TransactionType)과 실제 타입을 맞춘다.
         """
         missing = [
             key for key in CSV_REQUIRED_COLUMNS
@@ -85,7 +84,7 @@ class NewTransaction:
 
 @dataclass(frozen=True, slots=True)
 class Transaction:
-    """저장소에 한 줄로 저장된 용돈 거래. id는 저장소가 채번한 문자열(TX-000001)."""
+    """저장소에 한 줄로 저장된 용돈 거래. id는 저장소가 발급한 문자열(TX-000001)."""
 
     id: str
     type: TransactionType
@@ -98,8 +97,8 @@ class Transaction:
     def __post_init__(self) -> None:
         if not is_transaction_id(self.id):
             raise ValidationError(
-                f"거래 id '{self.id}'가 TX-000001 형식이 아닙니다.",
-                "저장 파일의 id 열을 확인하거나 해당 줄을 정리하세요.",
+                f"거래 id '{self.id}'는 유효한 번호가 아닙니다.",
+                "id는 TX- 뒤에 최소 6자리 ASCII 숫자로 된 양수 번호여야 합니다(예: TX-000001).",
             )
         draft = NewTransaction(
             type=self.type,

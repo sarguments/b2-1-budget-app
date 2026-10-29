@@ -1,8 +1,7 @@
-"""경계 형식 파서: 문자열 입력(콘솔·CSV·JSON)을 검증된 기본 값으로 바꾼다.
+"""콘솔·CSV·JSON 입력에 공통으로 적용하는 parsing 규칙.
 
-models.py가 '검증된 데이터 모양'이라면, 여기는 '그 모양에 도달하는 규칙'
-모음이다. 실패 시 원인과 힌트를 담은 ValidationError만 던지고 통과한 값만
-내보낸다. cli·models·repositories 세 계층이 같은 규칙을 공유한다.
+입력을 검증하고 변환한다. 잘못된 값은 원인과 힌트를 담은
+ValidationError로 알린다. cli·models·repositories에서 같은 규칙을 쓴다.
 """
 
 from __future__ import annotations
@@ -16,7 +15,7 @@ from budget_app.errors import ValidationError
 TransactionType = Literal["income", "expense"]
 TRANSACTION_TYPES: Final[tuple[TransactionType, ...]] = ("income", "expense")
 
-_ID_PATTERN: Final = re.compile(r"^TX-\d{6}$")
+_ID_PATTERN: Final = re.compile(r"TX-[0-9]{6,}")
 _DATE_PATTERN: Final = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _MONTH_PATTERN: Final = re.compile(r"^\d{4}-\d{2}$")
 
@@ -25,7 +24,7 @@ MAX_MEMO_LENGTH: Final = 200
 
 
 def reject_control_chars(value: str, label: str) -> None:
-    """행 구분·CSV 파싱을 깨는 문자를 한 곳에서 차단한다."""
+    """행 구분·CSV parsing을 깨는 문자를 한 곳에서 차단한다."""
     if any(char in value for char in ("\n", "\r", "|")):
         raise ValidationError(
             f"{label}에 줄바꿈이나 구분 문자 '|'를 쓸 수 없습니다.",
@@ -34,7 +33,7 @@ def reject_control_chars(value: str, label: str) -> None:
 
 
 def parse_type(raw: str) -> TransactionType:
-    """'income'/'expense' 문자열을 검증해 리터럴 값으로 돌려준다."""
+    """입력을 검증하고 Literal 타입의 income 또는 expense를 반환한다."""
     value = raw.strip().lower()
     if value == "income":
         return "income"
@@ -47,12 +46,12 @@ def parse_type(raw: str) -> TransactionType:
 
 
 def parse_date(raw: str) -> str:
-    """YYYY-MM-DD 달력 실존 날짜를 검증하고 공백을 제거한다."""
+    """YYYY-MM-DD 형식과 실제 날짜인지 확인하고 앞뒤 공백을 제거한다."""
     value = raw.strip()
     if not _DATE_PATTERN.match(value):
         raise ValidationError(
             f"날짜 '{raw}'는 YYYY-MM-DD 형식이 아닙니다.",
-            "예: 2024-01-15처럼 연-월-일(네자리-두자리-두자리)로 입력하세요.",
+            "예: 2024-01-15처럼 연-월-일(네 자리-두 자리-두 자리)로 입력하세요.",
         )
     try:
         _date.fromisoformat(value)
@@ -70,7 +69,7 @@ def parse_month(raw: str) -> str:
     if not _MONTH_PATTERN.match(value):
         raise ValidationError(
             f"월 '{raw}'는 YYYY-MM 형식이 아닙니다.",
-            "예: 2024-01처럼 연-월(네자리-두자리)로 입력하세요.",
+            "예: 2024-01처럼 연-월(네 자리-두 자리)로 입력하세요.",
         )
     try:
         _date.fromisoformat(f"{value}-01")
@@ -132,12 +131,18 @@ def validate_category_name(raw: str) -> str:
 
 
 def format_transaction_id(seq: int) -> str:
-    """거래 id: TX- + 6자리 영(0) 채번 번호(원문 요구 형식)."""
+    """양수 번호를 TX-와 최소 6자리 ASCII 숫자로 표시한다."""
+    if not isinstance(seq, int) or isinstance(seq, bool) or seq <= 0:
+        raise ValidationError(
+            "거래 번호는 양수 정수여야 합니다.",
+            "bool이나 0 이하의 번호는 사용할 수 없습니다.",
+        )
     return f"TX-{seq:06d}"
 
 
 def is_transaction_id(value: str) -> bool:
-    return bool(_ID_PATTERN.match(value))
+    """TX- 뒤에 최소 6자리 ASCII 숫자가 있고, 번호가 0보다 큰지 확인한다."""
+    return bool(_ID_PATTERN.fullmatch(value)) and any(char != "0" for char in value[3:])
 
 
 __all__ = [

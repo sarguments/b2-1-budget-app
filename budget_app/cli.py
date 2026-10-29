@@ -1,8 +1,8 @@
 """CLI 계층: 인수를 해석하고 서비스를 호출하며 stdout에 결과를 찍는다.
 
 여기서 출력하는 것은 명령 결과뿐이다. 오류도 [오류]/[힌트] 두 줄 문구로
-stdout에 내보내고 스택 트레이스는 절대 보여주지 않는다.
-종료 코드는 errors.py의 약속(성공 0 / 도메인 1 / 사용법 2)을 따른다.
+stdout에 내보내고 traceback은 절대 보여주지 않는다.
+종료 코드는 errors.py의 약속(성공 0 / 입력·데이터 1 / 사용법 2)을 따른다.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ from budget_app.service import BudgetService, SearchCriteria
 
 T = TypeVar("T")
 
-#: 이 명령들을 실행할 때 카테고리 파일이 비어 있으면 기본값을 채운다(안 A).
+#: 이 명령들을 실행할 때 카테고리 파일이 비어 있으면 기본값을 채운다.
 _SEED_COMMANDS = frozenset({"add", "category", "import", "update"})
 
 
@@ -54,16 +54,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--verbose", action="store_true",
-        help="데코레이터의 로그·소요 시간을 stderr에 출력",
+        help="decorator의 로그·소요 시간을 stderr에 출력",
     )
     sub = parser.add_subparsers(dest="command", required=True, metavar="<명령>")
 
     sub.add_parser("add", help="거래를 대화형으로 입력받아 추가")
 
-    p_list = sub.add_parser("list", help="최근 추가순으로 거래 목록 출력")
+    p_list = sub.add_parser("list", help="거래일 내림차순으로 거래 목록 출력")
     p_list.add_argument("--limit", type=int, default=20, metavar="N", help="출력 건수 (기본 20)")
 
-    p_search = sub.add_parser("search", help="조건(AND)으로 거래를 찾아 최신순 출력")
+    p_search = sub.add_parser("search", help="조건(AND)으로 거래를 찾아 거래일 내림차순 출력")
     p_search.add_argument("--from", dest="date_from", metavar="YYYY-MM-DD", help="시작일(포함)")
     p_search.add_argument("--to", dest="date_to", metavar="YYYY-MM-DD", help="끝일(포함)")
     p_search.add_argument("--category", default="", metavar="NAME", help="카테고리 일치")
@@ -118,7 +118,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _prompt(prompt: str, parse: Callable[[str], T]) -> T:
-    """한 필드를 유효값이 나올 때까지 반복 입력받는다. 입력 고갈은 오류 1건."""
+    """유효한 값을 입력할 때까지 반복한다. 입력이 끝나면 ValidationError를 발생시킨다."""
     while True:
         try:
             raw = input(prompt)
@@ -388,7 +388,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """`python -m budget_app`의 실제 진입점. 종료 코드를 돌려준다.
 
     parse_args 중의 인수 오류(_AppParser.error가 던지는 UsageError)도
-    잡아야 하므로 파싱부터 try 안에 둔다. --help의 SystemExit(0)은
+    잡아야 하므로 parsing부터 try 안에 둔다. --help의 SystemExit(0)은
     BaseException이라 그대로 통과해 정상 종료한다.
     """
     try:
@@ -401,7 +401,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except KeyboardInterrupt:
         _print_error(ValidationError("입력 중단으로 작업을 취소했습니다.", "같은 명령을 다시 실행하세요."))
         return 1
-    except OSError as exc:  # 데코레이터를 거치지 않은 경로(생성기 등)의 파일/권한 오류도 트레이스 없이 안내한다.
+    except OSError as exc:  # decorator를 거치지 않은 경로(generator 등)의 파일/권한 오류도 traceback 없이 안내한다.
         _print_error(
             StorageError(
                 f"파일 처리에 실패했습니다: {exc.strerror or exc}",
@@ -409,7 +409,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         )
         return 1
-    except Exception as exc:  # 최외곽 안전망: 예측 못 한 오류도 트레이스 없이 안내한다.
+    except Exception as exc:  # 가장 바깥쪽 안전망: 예측 못 한 오류도 traceback 없이 안내한다.
         LOGGER.error("예상치 못한 내부 오류: %s", exc)
         _print_error(
             ValidationError(
